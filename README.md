@@ -1,4 +1,4 @@
-# Millenium Project - Equity Order Ticket System
+# Millennium Project - Equity Order Ticket System
 
 Bare-bones React web app for order entry with role-based front-end views backed by shared in-memory order data.
 
