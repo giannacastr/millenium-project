@@ -98,6 +98,7 @@ function App() {
           selectedOrderId={selectedOrderId}
           setSelectedOrderId={setSelectedOrderId}
           preTradeImpact={preTradeImpact}
+          exposure={INITIAL_EXPOSURE}
         />
       )}
 
