@@ -2,10 +2,10 @@
 
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { signIn } from "next-auth/react";
 
-export default function RegisterPage() {
+function RegisterPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
@@ -190,5 +190,24 @@ export default function RegisterPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="w-screen h-screen flex flex-col justify-center items-center">
+          <div className="bg-white py-6 px-6 rounded-xl w-96">
+            <div className="flex justify-center items-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              <p className="ml-3 text-gray-600">Loading...</p>
+            </div>
+          </div>
+        </main>
+      }
+    >
+      <RegisterPageInner />
+    </Suspense>
   );
 }

@@ -8,8 +8,33 @@ datasource db {
 }
 
 enum UserType {
-  STAFF
-  PARTNER
+  EQUITY_TRADER
+  RISK_OFFICER
+  PRIME_BROKER
+}
+
+enum OrderDirection {
+  BUY
+  SELL
+  SHORT
+}
+
+enum OrderTypeEnum {
+  MARKET
+  LIMIT
+  VWAP
+}
+
+enum OrderStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  RISK_APPROVED
+  ACKNOWLEDGED
+  PARTIALLY_FILLED
+  FULLY_FILLED
+  REJECTED
+  CANCELLED
 }
 
 model User {
@@ -19,9 +44,8 @@ model User {
   passwordHash String
   type         UserType
   enabled      Boolean  @default(true)
-  pending      Boolean  @default(true)
-  
-  // Permissions - add/remove as needed
+  pending      Boolean  @default(false)
+
   isSuper            Boolean @default(false)
   userRead           Boolean @default(false)
   userWrite          Boolean @default(false)
@@ -29,11 +53,13 @@ model User {
   orderWrite         Boolean @default(false)
   reportRead         Boolean @default(false)
   reportWrite        Boolean @default(false)
-  
-  // Relationships
-  partnerDetails     Json?
-  notifications      Notification[]
-  
+
+  partnerDetails Json?
+
+  notifications Notification[]
+  traderOrders  Order[] @relation("TraderOrders")
+  riskReviews   Order[] @relation("RiskReviews")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -44,7 +70,7 @@ model UserInvite {
   token     String   @unique
   userType  UserType
   expiresAt DateTime
-  
+
   createdAt DateTime @default(now())
 }
 
@@ -70,6 +96,68 @@ model PasswordResetToken {
   token     String   @unique
   expiresAt DateTime
   used      Boolean  @default(false)
-  
+
   createdAt DateTime @default(now())
+}
+
+model Order {
+  id       Int    @id @default(autoincrement())
+  ticketKey String @unique
+  title    String?
+
+  direction   OrderDirection
+  ticker      String
+  quantity    Int
+  orderType   OrderTypeEnum
+  limitPrice  Decimal? @db.Decimal(18, 4)
+  account     String
+  strategy    String
+  notes       String?
+
+  status OrderStatus @default(DRAFT)
+
+  traderId Int
+  trader   User @relation("TraderOrders", fields: [traderId], references: [id])
+
+  reviewedById Int?
+  reviewer     User? @relation("RiskReviews", fields: [reviewedById], references: [id])
+
+  riskApprovedWithConditions Boolean @default(false)
+
+  brokerRejectReason String?
+  brokerRejectCode   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities OrderActivity[]
+  breachLogs RiskBreachLog[]
+
+  @@index([status])
+  @@index([traderId])
+  @@index([createdAt])
+}
+
+model OrderActivity {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  message   String
+  actorName String?
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+model RiskBreachLog {
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  checkType    String
+  breachDetail String?
+  resolution   String?
+  actorUserId  Int?
+  createdAt    DateTime @default(now())
+
+  @@index([orderId])
 }

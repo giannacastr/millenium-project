@@ -1,51 +1,37 @@
 import { prisma } from "../src/lib/db";
 import { hash } from "bcryptjs";
+import {
+  OrderDirection,
+  OrderStatus,
+  OrderTypeEnum,
+  UserType,
+} from "@prisma/client";
 
 async function main() {
   console.log("Seeding database...");
 
+  await prisma.orderActivity.deleteMany();
+  await prisma.riskBreachLog.deleteMany();
+  await prisma.order.deleteMany();
+
   const hashedPassword = await hash("password123", 12);
 
-  // Create superadmin user
-  const superadmin = await prisma.user.create({
-    data: {
-      email: "admin@test.com",
-      name: "Admin User",
+  const trader = await prisma.user.upsert({
+    where: { email: "trader@test.com" },
+    update: {
+      name: "Alex Trader",
       passwordHash: hashedPassword,
-      type: "STAFF",
+      type: UserType.EQUITY_TRADER,
       enabled: true,
       pending: false,
-      isSuper: true,
-    },
-  });
-
-  console.log("✓ Created superadmin:", superadmin.email);
-
-  // Create staff user with permissions
-  const staff = await prisma.user.create({
-    data: {
-      email: "staff@test.com",
-      name: "Staff User",
-      passwordHash: hashedPassword,
-      type: "STAFF",
-      enabled: true,
-      pending: false,
-      userRead: true,
-      userWrite: true,
       orderRead: true,
-      reportRead: true,
+      orderWrite: true,
     },
-  });
-
-  console.log("✓ Created staff user:", staff.email);
-
-  // Create partner user
-  const partner = await prisma.user.create({
-    data: {
-      email: "partner@test.com",
-      name: "Partner User",
+    create: {
+      email: "trader@test.com",
+      name: "Alex Trader",
       passwordHash: hashedPassword,
-      type: "PARTNER",
+      type: UserType.EQUITY_TRADER,
       enabled: true,
       pending: false,
       orderRead: true,
@@ -53,27 +39,138 @@ async function main() {
     },
   });
 
-  console.log("✓ Created partner user:", partner.email);
-
-  // Create pending user (awaiting activation)
-  const pending = await prisma.user.create({
-    data: {
-      email: "pending@test.com",
-      name: "Pending User",
+  const risk = await prisma.user.upsert({
+    where: { email: "risk@test.com" },
+    update: {
+      name: "Jordan Risk",
       passwordHash: hashedPassword,
-      type: "STAFF",
-      enabled: false,
-      pending: true,
+      type: UserType.RISK_OFFICER,
+      enabled: true,
+      pending: false,
+      reportRead: true,
+      orderRead: true,
+    },
+    create: {
+      email: "risk@test.com",
+      name: "Jordan Risk",
+      passwordHash: hashedPassword,
+      type: UserType.RISK_OFFICER,
+      enabled: true,
+      pending: false,
+      reportRead: true,
+      orderRead: true,
     },
   });
 
-  console.log("✓ Created pending user:", pending.email);
+  const broker = await prisma.user.upsert({
+    where: { email: "broker@test.com" },
+    update: {
+      name: "Sam Broker",
+      passwordHash: hashedPassword,
+      type: UserType.PRIME_BROKER,
+      enabled: true,
+      pending: false,
+      orderRead: true,
+      orderWrite: true,
+    },
+    create: {
+      email: "broker@test.com",
+      name: "Sam Broker",
+      passwordHash: hashedPassword,
+      type: UserType.PRIME_BROKER,
+      enabled: true,
+      pending: false,
+      orderRead: true,
+      orderWrite: true,
+    },
+  });
 
-  console.log("\nSeed completed! Test credentials:");
-  console.log("- Admin: admin@test.com / password123");
-  console.log("- Staff: staff@test.com / password123");
-  console.log("- Partner: partner@test.com / password123");
-  console.log("- Pending: pending@test.com / password123");
+  console.log("✓ Users:", trader.email, risk.email, broker.email);
+
+  const mkTitle = (dir: OrderDirection, ticker: string, qty: number) =>
+    `${dir === OrderDirection.BUY ? "Buy" : dir === OrderDirection.SELL ? "Sell" : "Short"} ${ticker} · ${qty.toLocaleString()} shares`;
+
+  const o1 = await prisma.order.create({
+    data: {
+      ticketKey: "EQ-001",
+      title: mkTitle(OrderDirection.BUY, "MSFT", 50000),
+      direction: OrderDirection.BUY,
+      ticker: "MSFT",
+      quantity: 50000,
+      orderType: OrderTypeEnum.LIMIT,
+      limitPrice: "411.50",
+      account: "Long Book",
+      strategy: "Core Equity",
+      notes: "Model signal confirmed",
+      status: OrderStatus.SUBMITTED,
+      traderId: trader.id,
+    },
+  });
+
+  await prisma.orderActivity.createMany({
+    data: [
+      {
+        orderId: o1.id,
+        message: `Submitted by ${trader.name} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+        actorName: trader.name,
+      },
+      {
+        orderId: o1.id,
+        message:
+          "Risk check flagged: single-name concentration · pending manual review",
+        actorName: "System",
+      },
+    ],
+  });
+
+  await prisma.riskBreachLog.create({
+    data: {
+      orderId: o1.id,
+      checkType: "Single-name concentration",
+      breachDetail: "Post-trade weight would exceed soft limit",
+      resolution: "Pending",
+    },
+  });
+
+  const o2 = await prisma.order.create({
+    data: {
+      ticketKey: "EQ-002",
+      title: mkTitle(OrderDirection.SELL, "XOM", 15000),
+      direction: OrderDirection.SELL,
+      ticker: "XOM",
+      quantity: 15000,
+      orderType: OrderTypeEnum.MARKET,
+      limitPrice: null,
+      account: "Long Book",
+      strategy: "Event Driven",
+      notes: "Trim position",
+      status: OrderStatus.RISK_APPROVED,
+      traderId: trader.id,
+      reviewedById: risk.id,
+    },
+  });
+
+  await prisma.orderActivity.createMany({
+    data: [
+      {
+        orderId: o2.id,
+        message: `Submitted by ${trader.name}`,
+        actorName: trader.name,
+      },
+      {
+        orderId: o2.id,
+        message: `Approved by ${risk.name}`,
+        actorName: risk.name,
+      },
+    ],
+  });
+
+  console.log("✓ Sample orders EQ-001, EQ-002");
+
+  console.log("\nSeed completed! Test logins (password: password123):");
+  console.log("- Equity Trader: trader@test.com");
+  console.log("- Risk Officer:   risk@test.com");
+  console.log("- Prime Broker:   broker@test.com");
 }
 
 main()
