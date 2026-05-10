@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  STAFF
+  PARTNER
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  name         String
+  passwordHash String
+  type         UserType
+  enabled      Boolean  @default(true)
+  pending      Boolean  @default(true)
+  
+  // Permissions - add/remove as needed
+  isSuper            Boolean @default(false)
+  userRead           Boolean @default(false)
+  userWrite          Boolean @default(false)
+  orderRead          Boolean @default(false)
+  orderWrite         Boolean @default(false)
+  reportRead         Boolean @default(false)
+  reportWrite        Boolean @default(false)
+  
+  // Relationships
+  partnerDetails     Json?
+  notifications      Notification[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserInvite {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  token     String   @unique
+  userType  UserType
+  expiresAt DateTime
+  
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id           Int       @id @default(autoincrement())
+  title        String
+  action       String?
+  actionText   String?
+  dateCreated  DateTime  @default(now())
+  dateViewed   DateTime?
+  isDelivered  Boolean   @default(false)
+  template     String?
+  payload      Json?
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dateViewed])
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+}

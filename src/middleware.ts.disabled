@@ -1,0 +1,37 @@
+import { auth } from "@/auth";
+import { NextRequest, NextResponse } from "next/server";
+
+const publicPaths = ["/signIn", "/register", "/api/auth", "/api/invites", "/pending", "/deactivated"];
+
+function isPublicPath(pathname: string): boolean {
+  return publicPaths.some((path) => pathname.startsWith(path));
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (isPublicPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  try {
+    const session = await auth();
+
+    if (!session?.user) {
+      const signInUrl = new URL("/signIn", request.nextUrl.origin);
+      signInUrl.searchParams.set("callbackUrl", pathname);
+      return NextResponse.redirect(signInUrl);
+    }
+
+    return NextResponse.next();
+  } catch (error) {
+    console.error("Middleware error:", error);
+    return NextResponse.next();
+  }
+}
+
+export const config = {
+  matcher: [
+    "/((?!_next|_vercel|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};
