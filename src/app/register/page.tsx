@@ -2,25 +2,40 @@
 
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useState, useEffect, Suspense } from "react";
 import { signIn } from "next-auth/react";
+import { UserType } from "@prisma/client";
+
+const ROLE_LABELS: Record<UserType, string> = {
+  [UserType.EQUITY_TRADER]: "Equity Trader",
+  [UserType.RISK_OFFICER]: "Risk Officer",
+  [UserType.PRIME_BROKER]: "Prime Broker",
+};
 
 function RegisterPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
-  
+  const inviteMode = Boolean(token);
+
   const [loading, setLoading] = useState(false);
-  const [loadingInvite, setLoadingInvite] = useState(true);
-  const [email, setEmail] = useState<string | null>(null);
+  const [loadingInvite, setLoadingInvite] = useState(inviteMode);
+  const [email, setEmail] = useState<string | null>(inviteMode ? null : "");
+  const [inviteRole, setInviteRole] = useState<UserType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [passwordMatch, setPasswordMatch] = useState(true);
 
+  const [openForm, setOpenForm] = useState({
+    email: "",
+    name: "",
+    password: "",
+    confirm: "",
+    userType: UserType.EQUITY_TRADER as UserType,
+  });
+
   useEffect(() => {
-    if (!token) {
-      router.replace("/");
-      return;
-    }
+    if (!inviteMode || !token) return;
 
     const validateToken = async () => {
       try {
@@ -30,18 +45,21 @@ function RegisterPageInner() {
         }
         const data = await res.json();
         setEmail(data.email);
+        if (data.userType) {
+          setInviteRole(data.userType as UserType);
+        }
       } catch (e) {
         setError((e as Error).message);
-        setTimeout(() => router.replace("/"), 2000);
+        setTimeout(() => router.replace("/signIn"), 2000);
       } finally {
         setLoadingInvite(false);
       }
     };
 
     validateToken();
-  }, [token, router]);
+  }, [inviteMode, token, router]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleInviteSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -49,6 +67,13 @@ function RegisterPageInner() {
     const formData = new FormData(e.currentTarget);
     const password = formData.get("password")?.toString() || "";
     const confirm = formData.get("confirm")?.toString() || "";
+    const name = formData.get("name")?.toString()?.trim() || "";
+
+    if (!name) {
+      setError("Please enter your name");
+      setLoading(false);
+      return;
+    }
 
     if (password !== confirm) {
       setPasswordMatch(false);
@@ -62,6 +87,7 @@ function RegisterPageInner() {
       const registerFormData = new FormData();
       registerFormData.append("inviteToken", token || "");
       registerFormData.append("password", password);
+      registerFormData.append("name", name);
 
       const res = await fetch("/api/users", {
         method: "POST",
@@ -85,109 +111,293 @@ function RegisterPageInner() {
       }
 
       router.push("/");
-    } catch (e) {
-      setError((e as Error).message);
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loadingInvite) {
+  const handleOpenSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+
+    if (openForm.password !== openForm.confirm) {
+      setPasswordMatch(false);
+      return;
+    }
+    setPasswordMatch(true);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: openForm.email.trim().toLowerCase(),
+          name: openForm.name.trim(),
+          password: openForm.password,
+          userType: openForm.userType,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Registration failed");
+      }
+
+      const signInResult = await signIn("credentials", {
+        email: openForm.email.trim().toLowerCase(),
+        password: openForm.password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        setError(signInResult.error);
+        return;
+      }
+
+      router.push("/");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (inviteMode && loadingInvite) {
     return (
-      <main className="w-screen h-screen flex flex-col justify-center items-center">
-        <div className="bg-white py-6 px-6 rounded-xl w-96">
-          <div className="flex justify-center items-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="ml-3 text-gray-600">Loading...</p>
+      <main className="flex h-screen w-screen flex-col items-center justify-center">
+        <div className="w-96 rounded-xl bg-white px-6 py-6">
+          <div className="flex items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+            <p className="ml-3 text-gray-600">Loading invite…</p>
           </div>
         </div>
       </main>
     );
   }
 
-  if (error && !email) {
+  if (inviteMode && error && !email) {
     return (
-      <main className="w-screen h-screen flex flex-col justify-center items-center">
-        <div className="bg-white py-6 px-6 rounded-xl w-96">
-          <div className="flex flex-col justify-center items-center">
-            <p className="text-red-600 text-center mb-4">{error}</p>
-            <p className="text-gray-500 text-sm">Redirecting...</p>
-          </div>
+      <main className="flex h-screen w-screen flex-col items-center justify-center">
+        <div className="w-96 rounded-xl bg-white px-6 py-6">
+          <p className="mb-4 text-center text-red-600">{error}</p>
+          <p className="text-center text-sm text-gray-500">Redirecting…</p>
         </div>
       </main>
     );
   }
 
-  return (
-    <main className="w-screen h-screen flex flex-col justify-center items-center">
-      <div className="bg-white py-6 px-6 rounded-xl w-96 sm:w-[580px]">
-        <div>
-          <h1 className="mb-1 text-xl font-semibold">Create Account</h1>
+  if (inviteMode && email) {
+    return (
+      <main className="flex min-h-screen w-screen flex-col items-center justify-center px-4">
+        <div className="w-full max-w-[580px] rounded-xl bg-white px-6 py-6 shadow-lg">
+          <h1 className="mb-1 text-xl font-semibold">Create account</h1>
           <p className="mb-4 text-sm font-light text-gray-500">
-            Welcome! Please set your password to activate your account.
+            You were invited to Millennium. Set your name and password.
           </p>
-          
+          {inviteRole && (
+            <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <span className="font-medium">Assigned role:</span>{" "}
+              {ROLE_LABELS[inviteRole]}
+            </p>
+          )}
+
           {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            <div className="mb-4 rounded border border-red-400 bg-red-100 p-3 text-red-700">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit}>
-            <div className="mb-3">
-              <label className="block text-gray-800 text-sm mb-2 font-light">
-                Email
-              </label>
+          <form onSubmit={handleInviteSubmit}>
+            <label className="mb-3 block text-sm">
+              <span className="mb-2 block font-light text-gray-800">Email</span>
               <input
                 type="email"
-                value={email || ""}
+                value={email}
                 disabled
-                className="bg-gray-100 w-full py-2 px-3 text-gray-700 rounded"
+                className="w-full rounded bg-gray-100 px-3 py-2 text-gray-700"
               />
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-gray-800 text-sm mb-2 font-light">
-                Password
-              </label>
+            </label>
+            <label className="mb-3 block text-sm">
+              <span className="mb-2 block font-light text-gray-800">Full name</span>
+              <input
+                name="name"
+                type="text"
+                required
+                placeholder="Your name"
+                disabled={loading}
+                className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
+              />
+            </label>
+            <label className="mb-3 block text-sm">
+              <span className="mb-2 block font-light text-gray-800">Password</span>
               <input
                 name="password"
                 type="password"
-                placeholder="••••••"
                 required
                 disabled={loading}
-                className="bg-zinc-50 border border-gray-200 rounded w-full py-2 px-3"
+                className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
               />
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-gray-800 text-sm mb-2 font-light">
-                Confirm Password
-              </label>
+            </label>
+            <label className="mb-3 block text-sm">
+              <span className="mb-2 block font-light text-gray-800">
+                Confirm password
+              </span>
               <input
                 name="confirm"
                 type="password"
-                placeholder="••••••"
                 required
                 disabled={loading}
-                className={`bg-zinc-50 border rounded w-full py-2 px-3 ${
+                className={`w-full rounded border bg-zinc-50 px-3 py-2 ${
                   !passwordMatch ? "border-red-500" : "border-gray-200"
                 }`}
               />
               {!passwordMatch && (
-                <p className="text-red-600 text-sm mt-1">Passwords do not match</p>
+                <p className="mt-1 text-sm text-red-600">Passwords do not match</p>
               )}
-            </div>
-
+            </label>
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 text-white font-light py-2 rounded hover:bg-blue-700 disabled:bg-blue-400"
+              className="w-full rounded bg-blue-600 py-2 font-light text-white hover:bg-blue-700 disabled:bg-blue-400"
             >
-              {loading ? "Creating..." : "Create Account"}
+              {loading ? "Creating…" : "Create account"}
             </button>
           </form>
+          <p className="mt-6 text-center text-sm text-gray-500">
+            Already have an account?{" "}
+            <Link href="/signIn" className="text-blue-600 hover:underline">
+              Sign in
+            </Link>
+          </p>
         </div>
+      </main>
+    );
+  }
+
+  /* Open registration — choose desk role */
+  return (
+    <main className="flex min-h-screen w-screen flex-col items-center justify-center px-4 py-12">
+      <div className="w-full max-w-[580px] rounded-xl bg-white px-6 py-6 shadow-lg">
+        <h1 className="mb-1 text-xl font-semibold">Create account</h1>
+        <p className="mb-4 text-sm font-light text-gray-500">
+          Choose your desk role, then sign in to the matching workspace.
+        </p>
+
+        {error && (
+          <div className="mb-4 rounded border border-red-400 bg-red-100 p-3 text-red-700">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleOpenSubmit}>
+          <label className="mb-3 block text-sm">
+            <span className="mb-2 block font-light text-gray-800">Full name</span>
+            <input
+              value={openForm.name}
+              onChange={(e) =>
+                setOpenForm((f) => ({ ...f, name: e.target.value }))
+              }
+              type="text"
+              required
+              disabled={loading}
+              className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
+            />
+          </label>
+          <label className="mb-3 block text-sm">
+            <span className="mb-2 block font-light text-gray-800">Email</span>
+            <input
+              value={openForm.email}
+              onChange={(e) =>
+                setOpenForm((f) => ({ ...f, email: e.target.value }))
+              }
+              type="email"
+              required
+              disabled={loading}
+              className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
+            />
+          </label>
+          <label className="mb-3 block text-sm">
+            <span className="mb-2 block font-light text-gray-800">Desk role</span>
+            <select
+              value={openForm.userType}
+              onChange={(e) =>
+                setOpenForm((f) => ({
+                  ...f,
+                  userType: e.target.value as UserType,
+                }))
+              }
+              disabled={loading}
+              className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
+            >
+              {(
+                [
+                  UserType.EQUITY_TRADER,
+                  UserType.RISK_OFFICER,
+                  UserType.PRIME_BROKER,
+                ] as const
+              ).map((ut) => (
+                <option key={ut} value={ut}>
+                  {ROLE_LABELS[ut]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mb-3 block text-sm">
+            <span className="mb-2 block font-light text-gray-800">Password</span>
+            <input
+              value={openForm.password}
+              onChange={(e) =>
+                setOpenForm((f) => ({ ...f, password: e.target.value }))
+              }
+              type="password"
+              required
+              minLength={6}
+              disabled={loading}
+              className="w-full rounded border border-gray-200 bg-zinc-50 px-3 py-2"
+            />
+          </label>
+          <label className="mb-3 block text-sm">
+            <span className="mb-2 block font-light text-gray-800">
+              Confirm password
+            </span>
+            <input
+              value={openForm.confirm}
+              onChange={(e) =>
+                setOpenForm((f) => ({ ...f, confirm: e.target.value }))
+              }
+              type="password"
+              required
+              disabled={loading}
+              className={`w-full rounded border bg-zinc-50 px-3 py-2 ${
+                !passwordMatch ? "border-red-500" : "border-gray-200"
+              }`}
+            />
+            {!passwordMatch && (
+              <p className="mt-1 text-sm text-red-600">Passwords do not match</p>
+            )}
+          </label>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded bg-blue-600 py-2 font-light text-white hover:bg-blue-700 disabled:bg-blue-400"
+          >
+            {loading ? "Creating…" : "Create account"}
+          </button>
+        </form>
+
+        <p className="mt-4 text-center text-xs text-gray-400">
+          Have an invite link? Open it or append{" "}
+          <code className="rounded bg-gray-100 px-1">?token=…</code> to this page.
+        </p>
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Already have an account?{" "}
+          <Link href="/signIn" className="text-blue-600 hover:underline">
+            Sign in
+          </Link>
+        </p>
       </div>
     </main>
   );
@@ -197,11 +407,11 @@ export default function RegisterPage() {
   return (
     <Suspense
       fallback={
-        <main className="w-screen h-screen flex flex-col justify-center items-center">
-          <div className="bg-white py-6 px-6 rounded-xl w-96">
-            <div className="flex justify-center items-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <p className="ml-3 text-gray-600">Loading...</p>
+        <main className="flex h-screen w-screen flex-col items-center justify-center">
+          <div className="w-96 rounded-xl bg-white px-6 py-6">
+            <div className="flex items-center justify-center py-8">
+              <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+              <p className="ml-3 text-gray-600">Loading…</p>
             </div>
           </div>
         </main>
