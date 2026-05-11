@@ -5,6 +5,7 @@ import type { MarketQuoteDTO } from "@/lib/trading/marketQuote";
 
 type Props = {
   ticker: string;
+  onLastPrice?: (last: number | null) => void;
 };
 
 function fmtVol(n: number): string {
@@ -22,7 +23,7 @@ function fmtPx(n: number | null, digits = 2): string {
   });
 }
 
-export default function DraftTickerInsight({ ticker }: Props) {
+export default function DraftTickerInsight({ ticker, onLastPrice }: Props) {
   const [quote, setQuote] = useState<MarketQuoteDTO | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,6 +36,7 @@ export default function DraftTickerInsight({ ticker }: Props) {
       setLoading(true);
       setErr(null);
       setQuote(null);
+      onLastPrice?.(null);
       try {
         const res = await fetch(
           `/api/quotes?symbol=${encodeURIComponent(sym)}`,
@@ -45,7 +47,11 @@ export default function DraftTickerInsight({ ticker }: Props) {
           if (!cancelled) setErr(data.error ?? "Could not load quote");
           return;
         }
-        if (!cancelled) setQuote(data.quote ?? null);
+        if (!cancelled) {
+          const q = (data.quote ?? null) as MarketQuoteDTO | null;
+          setQuote(q);
+          onLastPrice?.(q?.last ?? null);
+        }
       } catch {
         if (!cancelled) setErr("Network error");
       } finally {
@@ -57,7 +63,7 @@ export default function DraftTickerInsight({ ticker }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [ticker]);
+  }, [ticker, onLastPrice]);
 
   const sessionUp =
     quote?.sessionChangePct != null && quote.sessionChangePct >= 0;

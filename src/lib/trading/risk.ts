@@ -11,15 +11,18 @@ export function computePreTradeImpact(input: {
   ticker: string;
   quantity: number;
   limitPrice?: number | null;
+  livePrice?: number | null;
 }): PreTradeImpact {
   const meta = TICKER_META[input.ticker] ?? {
     sector: "Other",
     price: 100,
   };
+  const live =
+    input.livePrice != null && input.livePrice > 0 ? input.livePrice : null;
   const price =
     input.limitPrice && input.limitPrice > 0
       ? input.limitPrice
-      : meta.price;
+      : live ?? meta.price;
   const notional = Math.max(0, Number(input.quantity)) * price;
   const singleNameAfter =
     (INITIAL_EXPOSURE.topSingleNames.find((p) => p.ticker === input.ticker)

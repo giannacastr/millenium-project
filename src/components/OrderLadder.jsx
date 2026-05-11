@@ -1,30 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useMemo } from 'react'
 
 function OrderLadder({ ticker, currentPrice, orders }) {
-  const [ladderData, setLadderData] = useState([
-    { price: currentPrice + 0.4, type: 'ask', size: 8500, status: 'resting' },
-    { price: currentPrice + 0.25, type: 'ask', size: 6200, status: 'resting' },
-    { price: currentPrice + 0.1, type: 'ask', size: 12100, status: 'resting' },
-    { price: currentPrice - 0.05, type: 'bid', size: 15600, status: 'resting' },
-    { price: currentPrice - 0.2, type: 'bid', size: 9800, status: 'resting' },
-    { price: currentPrice - 0.35, type: 'bid', size: 7300, status: 'resting' },
-  ])
-
-  // Simulate price movements affecting ladder
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLadderData((prev) => {
-        const drift = (Math.random() - 0.5) * 0.1
-        return prev.map((level) => ({
-          ...level,
-          price: Number((level.price + drift).toFixed(2)),
-          size: Math.max(2000, level.size + (Math.random() - 0.5) * 2000),
-        }))
-      })
-    }, 1500)
-
-    return () => clearInterval(interval)
-  }, [currentPrice])
+  const ladderData = useMemo(
+    () => [
+      { price: currentPrice + 0.4, type: 'ask', size: 8500, status: 'resting' },
+      { price: currentPrice + 0.25, type: 'ask', size: 6200, status: 'resting' },
+      { price: currentPrice + 0.1, type: 'ask', size: 12100, status: 'resting' },
+      { price: currentPrice - 0.05, type: 'bid', size: 15600, status: 'resting' },
+      { price: currentPrice - 0.2, type: 'bid', size: 9800, status: 'resting' },
+      { price: currentPrice - 0.35, type: 'bid', size: 7300, status: 'resting' },
+    ],
+    [currentPrice],
+  )
 
   const userOrders = orders.filter((o) => o.ticker === ticker && o.status !== 'Fully Filled' && o.status !== 'Rejected')
 

@@ -46,6 +46,7 @@ export default function TraderDesk() {
   const [bucket, setBucket] = useState<BlotterFilter>("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
+  const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
 
   const [ticket, setTicket] = useState({
     direction: "BUY" as "BUY" | "SELL" | "SHORT",
@@ -96,6 +97,7 @@ export default function TraderDesk() {
     ticker: ticket.ticker,
     quantity: ticket.quantity,
     limitPrice: limitNum,
+    livePrice: liveLastPrice,
   });
 
   const filtered = useMemo(() => {
@@ -416,7 +418,10 @@ export default function TraderDesk() {
                   ))}
                 </select>
               </label>
-              <DraftTickerInsight ticker={ticket.ticker} />
+              <DraftTickerInsight
+                ticker={ticket.ticker}
+                onLastPrice={setLiveLastPrice}
+              />
               <label className="block text-sm">
                 <span className="text-slate-600">Quantity</span>
                 <input

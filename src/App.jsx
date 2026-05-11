@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import RoleSelection from './components/RoleSelection'
 import EquityTraderView from './roles/EquityTraderView'
 import RiskOfficerView from './roles/RiskOfficerView'
 import PrimeBrokerView from './roles/PrimeBrokerView'
 import { INITIAL_EXPOSURE, INITIAL_ORDERS, TICKER_OPTIONS } from './data/constants'
+import { FINNHUB_KEY } from './data/finnhub'
 
 const emptyTicket = {
   direction: 'Buy',
@@ -22,21 +23,106 @@ function App() {
   const [orders, setOrders] = useState(INITIAL_ORDERS)
   const [ticket, setTicket] = useState(emptyTicket)
   const [selectedOrderId, setSelectedOrderId] = useState(null)
+  const [livePrice, setLivePrice] = useState(null)
+  const [quote, setQuote] = useState(null)
+  const wsRef = useRef(null)
+  const subscribedRef = useRef(null)
 
   const tickerMeta = useMemo(
     () => TICKER_OPTIONS.find((option) => option.symbol === ticket.ticker) ?? TICKER_OPTIONS[0],
     [ticket.ticker],
   )
 
+  // Single Finnhub WebSocket; subscribe to ticket.ticker, resubscribe on change
+  useEffect(() => {
+    if (!FINNHUB_KEY) return
+
+    const ws = new WebSocket(`wss://ws.finnhub.io?token=${FINNHUB_KEY}`)
+    wsRef.current = ws
+
+    ws.addEventListener('open', () => {
+      if (ticket.ticker) {
+        ws.send(JSON.stringify({ type: 'subscribe', symbol: ticket.ticker }))
+        subscribedRef.current = ticket.ticker
+      }
+    })
+
+    ws.addEventListener('message', (evt) => {
+      try {
+        const msg = JSON.parse(evt.data)
+        if (msg?.type === 'trade' && Array.isArray(msg.data) && msg.data.length > 0) {
+          const last = msg.data[0]?.p
+          if (typeof last === 'number' && Number.isFinite(last)) {
+            setLivePrice(last)
+          }
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    })
+
+    ws.addEventListener('close', () => {
+      wsRef.current = null
+      subscribedRef.current = null
+    })
+
+    return () => {
+      try {
+        if (subscribedRef.current) {
+          ws.send(JSON.stringify({ type: 'unsubscribe', symbol: subscribedRef.current }))
+        }
+      } catch {
+        // ignore
+      }
+      ws.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+
+    const prev = subscribedRef.current
+    if (prev && prev !== ticket.ticker) {
+      ws.send(JSON.stringify({ type: 'unsubscribe', symbol: prev }))
+      subscribedRef.current = null
+    }
+    if (ticket.ticker && subscribedRef.current !== ticket.ticker) {
+      ws.send(JSON.stringify({ type: 'subscribe', symbol: ticket.ticker }))
+      subscribedRef.current = ticket.ticker
+    }
+  }, [ticket.ticker])
+
+  // On ticker change, fetch Finnhub quote snapshot (high/low/open/prev close/volume)
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      try {
+        const res = await fetch(
+          `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticket.ticker)}&token=${FINNHUB_KEY}`,
+        )
+        const data = await res.json()
+        if (!cancelled) setQuote(data)
+      } catch {
+        if (!cancelled) setQuote(null)
+      }
+    }
+    if (ticket.ticker) void run()
+    return () => {
+      cancelled = true
+    }
+  }, [ticket.ticker])
+
   const preTradeImpact = useMemo(() => {
-    const price = Number(ticket.limitPrice) || tickerMeta.price
+    const price = Number(ticket.limitPrice) || livePrice || tickerMeta.price
     const notional = Math.max(0, Number(ticket.quantity)) * price
     const singleNameAfter = 7 + notional / 20000000
     const sectorAfter = (INITIAL_EXPOSURE.sectorWeights[tickerMeta.sector] ?? 12) + notional / 35000000
     const buyingPowerAfter = INITIAL_EXPOSURE.buyingPowerUsed + notional / 25000000
 
     return { singleNameAfter, sectorAfter, buyingPowerAfter }
-  }, [ticket, tickerMeta])
+  }, [ticket, tickerMeta, livePrice])
 
   const createOrder = (status) => {
     const newOrder = {
@@ -99,6 +185,8 @@ function App() {
           setSelectedOrderId={setSelectedOrderId}
           preTradeImpact={preTradeImpact}
           exposure={INITIAL_EXPOSURE}
+          livePrice={livePrice}
+          quote={quote}
         />
       )}
 
