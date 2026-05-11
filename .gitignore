@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Next.js build output
+.next
+
 # Environment (secrets — use .env.example as template)
 .env
 .env.*
