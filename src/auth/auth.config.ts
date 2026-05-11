@@ -17,6 +17,7 @@ export default {
         token.type = u.type;
         token.enabled = u.enabled;
         token.pending = u.pending;
+        token.isSuper = Boolean(u.isSuper);
       }
       return token;
     },
@@ -26,6 +27,7 @@ export default {
       user.type = token.type;
       user.enabled = Boolean(token.enabled);
       user.pending = Boolean(token.pending);
+      user.isSuper = Boolean(token.isSuper);
       return session;
     },
   },
