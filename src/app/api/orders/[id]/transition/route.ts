@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { computePreTradeImpact } from "@/lib/trading/risk";
+import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import {
   OrderStatus,
   UserType,
@@ -90,10 +91,15 @@ export async function POST(
       if (order.status !== OrderStatus.DRAFT) {
         return NextResponse.json({ error: "Not a draft" }, { status: 400 });
       }
+      const snapshot = await computeExposureSnapshot({
+        extraSymbols: [order.ticker],
+      });
       const impact = computePreTradeImpact({
         ticker: order.ticker,
         quantity: order.quantity,
         limitPrice: order.limitPrice ? Number(order.limitPrice) : undefined,
+        direction: order.direction,
+        portfolio: snapshot,
       });
 
       await prisma.$transaction(async (tx) => {

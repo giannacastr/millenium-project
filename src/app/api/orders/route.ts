@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { computePreTradeImpact } from "@/lib/trading/risk";
+import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import { formatOrderTitle } from "@/lib/trading/order-format";
 import {
   OrderDirection,
@@ -128,10 +129,15 @@ export async function POST(req: NextRequest) {
   const status =
     body.mode === "draft" ? OrderStatus.DRAFT : OrderStatus.SUBMITTED;
 
+  const snapshot = await computeExposureSnapshot({
+    extraSymbols: [body.ticker.toUpperCase()],
+  });
   const impact = computePreTradeImpact({
     ticker: body.ticker.toUpperCase(),
     quantity: body.quantity,
     limitPrice: body.limitPrice ?? undefined,
+    direction,
+    portfolio: snapshot,
   });
 
   try {

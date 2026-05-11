@@ -47,7 +47,9 @@ export async function getRiskLimits(): Promise<RiskLimitsDTO> {
   };
 }
 
-export async function computeExposureSnapshot(): Promise<{
+export async function computeExposureSnapshot(opts?: {
+  extraSymbols?: string[];
+}): Promise<{
   exposure: ExposureDTO;
   limits: RiskLimitsDTO;
 }> {
@@ -78,6 +80,10 @@ export async function computeExposureSnapshot(): Promise<{
   const symbols = new Set<string>();
   for (const h of holdings) symbols.add(h.ticker.toUpperCase());
   for (const o of orders) symbols.add(o.ticker.toUpperCase());
+  for (const s of opts?.extraSymbols ?? []) {
+    const u = s.trim().toUpperCase();
+    if (u) symbols.add(u);
+  }
 
   const quoteEntries = await Promise.all(
     [...symbols].map(async (sym) => {

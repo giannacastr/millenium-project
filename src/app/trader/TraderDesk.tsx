@@ -5,10 +5,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
 import {
   ACCOUNT_OPTIONS,
-  INITIAL_EXPOSURE,
   STRATEGY_OPTIONS,
   TICKER_META,
 } from "@/lib/trading/exposure";
+import type { ExposureDTO, RiskLimitsDTO } from "@/lib/trading/portfolio";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import {
   BlotterFilter,
@@ -47,6 +47,10 @@ export default function TraderDesk() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
   const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
+  const [exposureSnapshot, setExposureSnapshot] = useState<{
+    exposure: ExposureDTO;
+    limits: RiskLimitsDTO;
+  } | null>(null);
 
   const [ticket, setTicket] = useState({
     direction: "BUY" as "BUY" | "SELL" | "SHORT",
@@ -66,24 +70,40 @@ export default function TraderDesk() {
     setOrders(data.orders ?? []);
   }, []);
 
+  const loadExposure = useCallback(async () => {
+    const res = await fetch("/api/exposure", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.exposure && data.limits) {
+      setExposureSnapshot({
+        exposure: data.exposure as ExposureDTO,
+        limits: data.limits as RiskLimitsDTO,
+      });
+    }
+  }, []);
+
   useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+    Promise.all([load(), loadExposure()]).finally(() => setLoading(false));
+  }, [load, loadExposure]);
 
   /** Refetch when other roles/tabs advance orders (risk approve, broker ack, etc.). */
   useEffect(() => {
     const poll = window.setInterval(() => {
       void load();
+      void loadExposure();
     }, 8000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") {
+        void load();
+        void loadExposure();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(poll);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, loadExposure]);
 
   const tickerMeta = TICKER_META[ticket.ticker] ?? {
     sector: "Other",
@@ -98,7 +118,16 @@ export default function TraderDesk() {
     quantity: ticket.quantity,
     limitPrice: limitNum,
     livePrice: liveLastPrice,
+    direction: ticket.direction,
+    portfolio: exposureSnapshot ?? undefined,
   });
+
+  const fmtNav = (n: number) => {
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}MM`;
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+    return `$${n.toFixed(0)}`;
+  };
 
   const filtered = useMemo(() => {
     let rows = orders.filter((o) => filterForBucket(o.status, bucket));
@@ -348,24 +377,92 @@ export default function TraderDesk() {
         <aside className="space-y-4">
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="mb-3 text-sm font-semibold text-slate-900">
-              Position monitor
+              Portfolio snapshot
             </h3>
             <p className="mb-3 text-xs text-slate-500">
-              Live snapshot (demo data)
+              Holdings + open-order reservation from the server; prices via Finnhub.
+              Refreshes with the blotter poll.
             </p>
-            <div className="space-y-2 text-sm">
-              {INITIAL_EXPOSURE.topSingleNames.slice(0, 8).map((p) => (
-                <div
-                  key={p.ticker}
-                  className="flex justify-between border-b border-slate-100 py-1"
-                >
-                  <span className="font-medium">{p.ticker}</span>
-                  <span className="tabular-nums text-slate-600">
-                    {p.weight}%
-                  </span>
+            {exposureSnapshot ? (
+              <>
+                <dl className="mb-3 grid grid-cols-2 gap-2 text-xs">
+                  <dt className="text-slate-500">NAV (holdings)</dt>
+                  <dd className="text-right font-mono font-medium text-slate-900">
+                    {fmtNav(exposureSnapshot.exposure.totalValue)}
+                  </dd>
+                  <dt className="text-slate-500">BP used</dt>
+                  <dd className="text-right font-mono text-slate-800">
+                    {exposureSnapshot.exposure.buyingPowerUsed.toFixed(1)}%
+                    <span className="text-slate-400">
+                      {" "}
+                      / cap {exposureSnapshot.limits.buyingPowerUsedCapPct}%
+                    </span>
+                  </dd>
+                  <dt className="text-slate-500">BP remaining</dt>
+                  <dd className="text-right font-mono text-emerald-800">
+                    {exposureSnapshot.exposure.buyingPowerRemaining}
+                  </dd>
+                  <dt className="text-slate-500">Open orders</dt>
+                  <dd className="text-right font-mono text-slate-700">
+                    {fmtNav(exposureSnapshot.exposure.openOrderNotional)}
+                  </dd>
+                </dl>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Single-name weight (cap {exposureSnapshot.limits.singleNameCapPct}%)
+                </p>
+                <div className="max-h-44 space-y-2 overflow-y-auto text-sm">
+                  {(exposureSnapshot.exposure.topSingleNames ?? [])
+                    .slice(0, 8)
+                    .map((p) => (
+                      <div
+                        key={p.ticker}
+                        className="flex justify-between border-b border-slate-100 py-1"
+                      >
+                        <span className="font-medium">{p.ticker}</span>
+                        <span
+                          className={`tabular-nums ${
+                            p.weight >= exposureSnapshot.limits.singleNameCapPct * 0.95
+                              ? "font-medium text-rose-700"
+                              : "text-slate-600"
+                          }`}
+                        >
+                          {p.weight}%
+                        </span>
+                      </div>
+                    ))}
                 </div>
-              ))}
-            </div>
+                <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Sector sleeves (cap {exposureSnapshot.limits.sectorCapPct}%)
+                </p>
+                <div className="max-h-36 space-y-1 overflow-y-auto text-xs">
+                  {Object.entries(exposureSnapshot.exposure.sectorWeights)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 6)
+                    .map(([sector, w]) => (
+                      <div
+                        key={sector}
+                        className="flex justify-between border-b border-slate-50 py-0.5"
+                      >
+                        <span className="truncate pr-2 text-slate-700">{sector}</span>
+                        <span
+                          className={
+                            w >= exposureSnapshot.limits.sectorCapPct * 0.95
+                              ? "font-medium text-rose-700"
+                              : "tabular-nums text-slate-600"
+                          }
+                        >
+                          {w}%
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No exposure data yet. Seed the database or check{" "}
+                <span className="font-mono text-xs">/api/exposure</span>.
+              </p>
+            )}
           </section>
         </aside>
       </div>
@@ -512,7 +609,10 @@ export default function TraderDesk() {
 
               <div className="rounded-lg bg-slate-50 p-4 text-sm">
                 <h4 className="mb-2 font-semibold text-slate-800">
-                  Pre-trade impact (simulated)
+                  Pre-trade impact
+                  {exposureSnapshot
+                    ? " (portfolio + limits)"
+                    : " (legacy demo curve)"}
                 </h4>
                 <ul className="space-y-1 text-slate-600">
                   <li>
