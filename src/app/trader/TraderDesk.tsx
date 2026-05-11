@@ -16,6 +16,7 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import ExecutionHistory from "./ExecutionHistory";
 
 type ApiOrder = {
   id: number;
@@ -31,6 +32,7 @@ type ApiOrder = {
   notes: string | null;
   status: OrderStatus;
   createdAt: string;
+  updatedAt: string;
   activities: { id: number; message: string; actorName: string | null; createdAt: string }[];
   trader: { name: string };
 };
@@ -56,7 +58,7 @@ export default function TraderDesk() {
   });
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/orders");
+    const res = await fetch("/api/orders", { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
     setOrders(data.orders ?? []);
@@ -64,6 +66,21 @@ export default function TraderDesk() {
 
   useEffect(() => {
     load().finally(() => setLoading(false));
+  }, [load]);
+
+  /** Refetch when other roles/tabs advance orders (risk approve, broker ack, etc.). */
+  useEffect(() => {
+    const poll = window.setInterval(() => {
+      void load();
+    }, 8000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const tickerMeta = TICKER_META[ticket.ticker] ?? {
@@ -297,6 +314,8 @@ export default function TraderDesk() {
               </tbody>
             </table>
           </div>
+
+          <ExecutionHistory orders={orders} loading={loading} />
 
           {selected && (
             <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
