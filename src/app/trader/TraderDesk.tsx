@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
 import {
   ACCOUNT_OPTIONS,
@@ -16,6 +16,7 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import OrderExecutionExpand from "./OrderExecutionExpand";
 
 type ApiOrder = {
   id: number;
@@ -31,6 +32,7 @@ type ApiOrder = {
   notes: string | null;
   status: OrderStatus;
   createdAt: string;
+  updatedAt: string;
   activities: { id: number; message: string; actorName: string | null; createdAt: string }[];
   trader: { name: string };
 };
@@ -56,7 +58,7 @@ export default function TraderDesk() {
   });
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/orders");
+    const res = await fetch("/api/orders", { cache: "no-store" });
     if (!res.ok) return;
     const data = await res.json();
     setOrders(data.orders ?? []);
@@ -64,6 +66,21 @@ export default function TraderDesk() {
 
   useEffect(() => {
     load().finally(() => setLoading(false));
+  }, [load]);
+
+  /** Refetch when other roles/tabs advance orders (risk approve, broker ack, etc.). */
+  useEffect(() => {
+    const poll = window.setInterval(() => {
+      void load();
+    }, 8000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const tickerMeta = TICKER_META[ticket.ticker] ?? {
@@ -114,8 +131,6 @@ export default function TraderDesk() {
     }
     return c;
   }, [orders]);
-
-  const selected = orders.find((o) => o.id === selectedId) ?? null;
 
   async function submitTicket(mode: "draft" | "submit") {
     const res = await fetch("/api/orders", {
@@ -206,7 +221,9 @@ export default function TraderDesk() {
       <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <span className="text-sm text-slate-500">Today&apos;s blotter</span>
+            <span className="text-sm text-slate-500">
+              Today&apos;s blotter — click a row for execution detail
+            </span>
             <div className="flex flex-wrap gap-2">
               {stripBtn("draft", "Draft", counts.draft)}
               {stripBtn("submitted", "Submitted", counts.submitted)}
@@ -234,6 +251,7 @@ export default function TraderDesk() {
             <table className="w-full text-left text-sm">
               <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
+                  <th className="w-8 px-2 py-3" aria-hidden />
                   <th className="px-4 py-3">Ticket</th>
                   <th className="px-4 py-3">Title</th>
                   <th className="px-4 py-3">Ticker</th>
@@ -246,171 +264,82 @@ export default function TraderDesk() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                       No orders in this filter.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((o) => (
-                    <tr
-                      key={o.id}
-                      onClick={() =>
-                        setSelectedId(selectedId === o.id ? null : o.id)
-                      }
-                      className={`cursor-pointer border-b border-slate-50 hover:bg-slate-50 ${
-                        selectedId === o.id ? "bg-blue-50/80" : ""
-                      }`}
-                    >
-                      <td className="px-4 py-3 font-mono text-xs font-medium text-blue-700">
-                        {o.ticketKey}
-                      </td>
-                      <td className="max-w-[220px] truncate px-4 py-3 text-slate-800">
-                        {o.title}
-                      </td>
-                      <td className="px-4 py-3 font-medium">{o.ticker}</td>
-                      <td className="px-4 py-3">{o.direction}</td>
-                      <td className="px-4 py-3 tabular-nums">
-                        {o.quantity.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
+                  filtered.map((o) => {
+                    const expanded = selectedId === o.id;
+                    return (
+                      <Fragment key={o.id}>
+                        <tr
+                          onClick={() =>
+                            setSelectedId(expanded ? null : o.id)
+                          }
+                          className={`cursor-pointer border-b border-slate-50 hover:bg-slate-50 ${
+                            expanded ? "bg-blue-50/80" : ""
+                          }`}
+                          aria-expanded={expanded}
                         >
-                          {STATUS_LABEL[o.status]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">
-                        {new Date(o.createdAt).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </td>
-                    </tr>
-                  ))
+                          <td className="px-2 py-3 text-center text-slate-400">
+                            <span
+                              className={`inline-block text-xs transition-transform ${expanded ? "rotate-180" : ""}`}
+                              aria-hidden
+                            >
+                              ▾
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs font-medium text-blue-700">
+                            {o.ticketKey}
+                          </td>
+                          <td className="max-w-[220px] truncate px-4 py-3 text-slate-800">
+                            {o.title}
+                          </td>
+                          <td className="px-4 py-3 font-medium">{o.ticker}</td>
+                          <td className="px-4 py-3">{o.direction}</td>
+                          <td className="px-4 py-3 tabular-nums">
+                            {o.quantity.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
+                            >
+                              {STATUS_LABEL[o.status]}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-500">
+                            {new Date(o.createdAt).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                        </tr>
+                        {expanded && (
+                          <tr className="border-b border-slate-200 bg-slate-50/50">
+                            <td colSpan={8} className="p-0 align-top">
+                              <OrderExecutionExpand
+                                order={o}
+                                onRunTransition={(body) =>
+                                  runTransition(o.id, body)
+                                }
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
-
-          {selected && (
-            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="font-mono text-sm text-blue-600">
-                    {selected.ticketKey}
-                  </p>
-                  <h2 className="text-2xl font-semibold text-slate-900">
-                    {selected.title}
-                  </h2>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {selected.status === "DRAFT" && (
-                    <button
-                      type="button"
-                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white"
-                      onClick={() =>
-                        runTransition(selected.id, { action: "submit_draft" })
-                      }
-                    >
-                      Submit for review
-                    </button>
-                  )}
-                  {selected.status === "ACKNOWLEDGED" && (
-                    <>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                        onClick={() =>
-                          runTransition(selected.id, {
-                            action: "simulate_partial_fill",
-                            filledQty: Math.floor(selected.quantity / 2),
-                            price: Number(selected.limitPrice ?? 180),
-                          })
-                        }
-                      >
-                        Sim partial fill
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white"
-                        onClick={() =>
-                          runTransition(selected.id, {
-                            action: "simulate_full_fill",
-                            price: Number(selected.limitPrice ?? 180),
-                          })
-                        }
-                      >
-                        Sim full fill
-                      </button>
-                    </>
-                  )}
-                  {selected.status === "PARTIALLY_FILLED" && (
-                    <button
-                      type="button"
-                      className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white"
-                      onClick={() =>
-                        runTransition(selected.id, {
-                          action: "simulate_full_fill",
-                          price: Number(selected.limitPrice ?? 180),
-                        })
-                      }
-                    >
-                      Complete fill
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div className="space-y-3 text-sm">
-                  <h3 className="text-xs font-semibold uppercase text-slate-500">
-                    Order fields
-                  </h3>
-                  <dl className="grid grid-cols-2 gap-2">
-                    <dt className="text-slate-500">Direction</dt>
-                    <dd>{selected.direction}</dd>
-                    <dt className="text-slate-500">Type</dt>
-                    <dd>{selected.orderType}</dd>
-                    <dt className="text-slate-500">Limit</dt>
-                    <dd>
-                      {selected.limitPrice != null
-                        ? `$${selected.limitPrice}`
-                        : "—"}
-                    </dd>
-                    <dt className="text-slate-500">Account</dt>
-                    <dd>{selected.account}</dd>
-                    <dt className="text-slate-500">Strategy</dt>
-                    <dd>{selected.strategy}</dd>
-                  </dl>
-                  <p className="text-slate-600">
-                    <span className="font-medium text-slate-700">Notes:</span>{" "}
-                    {selected.notes || "—"}
-                  </p>
-                </div>
-                <div>
-                  <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">
-                    Activity
-                  </h3>
-                  <ul className="max-h-72 space-y-3 overflow-y-auto border-l-2 border-slate-200 pl-4 text-sm">
-                    {selected.activities.map((a) => (
-                      <li key={a.id} className="relative">
-                        <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-blue-500" />
-                        <p className="text-slate-800">{a.message}</p>
-                        <p className="text-xs text-slate-400">
-                          {new Date(a.createdAt).toLocaleString()}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </section>
-          )}
         </div>
 
         <aside className="space-y-4">
