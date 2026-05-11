@@ -16,6 +16,7 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
 
 type ApiOrder = {
@@ -415,6 +416,7 @@ export default function TraderDesk() {
                   ))}
                 </select>
               </label>
+              <DraftTickerInsight ticker={ticket.ticker} />
               <label className="block text-sm">
                 <span className="text-slate-600">Quantity</span>
                 <input
