@@ -16,6 +16,7 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
 import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
 
@@ -614,21 +615,28 @@ export default function TraderDesk() {
                     ? " (portfolio + limits)"
                     : " (legacy demo curve)"}
                 </h4>
-                <ul className="space-y-1 text-slate-600">
-                  <li>
-                    Single-name weight (sim after):{" "}
-                    <strong>{impact.singleNameAfter.toFixed(1)}%</strong>
-                  </li>
-                  <li>
-                    Sector sleeve (sim after):{" "}
-                    <strong>{impact.sectorAfter.toFixed(1)}%</strong>
-                  </li>
-                  <li>
-                    Buying power used (sim):{" "}
-                    <strong>{impact.buyingPowerAfter.toFixed(1)}%</strong>
-                  </li>
-                </ul>
-                {impact.triggeredChecks.length > 0 && (
+                {exposureSnapshot ? (
+                  <PreTradeImpactAnalysis
+                    impact={impact}
+                    limits={exposureSnapshot.limits}
+                  />
+                ) : (
+                  <ul className="space-y-1 text-slate-600">
+                    <li>
+                      Single-name weight (sim after):{" "}
+                      <strong>{impact.singleNameAfter.toFixed(1)}%</strong>
+                    </li>
+                    <li>
+                      Sector sleeve (sim after):{" "}
+                      <strong>{impact.sectorAfter.toFixed(1)}%</strong>
+                    </li>
+                    <li>
+                      Buying power used (sim):{" "}
+                      <strong>{impact.buyingPowerAfter.toFixed(1)}%</strong>
+                    </li>
+                  </ul>
+                )}
+                {impact.triggeredChecks.length > 0 && !exposureSnapshot && (
                   <p className="mt-2 text-amber-700">
                     Flags: {impact.triggeredChecks.join(", ")}
                   </p>
