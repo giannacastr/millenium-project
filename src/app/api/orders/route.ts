@@ -25,6 +25,35 @@ function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
   };
 }
 
+/** Auto-fill any ACKNOWLEDGED orders that have been waiting >= 30 seconds. */
+async function autoFillMatureAcknowledgedOrders() {
+  const cutoff = new Date(Date.now() - 30_000);
+  const due = await prisma.order.findMany({
+    where: {
+      status: OrderStatus.ACKNOWLEDGED,
+      updatedAt: { lte: cutoff },
+    },
+    select: { id: true },
+  });
+  if (!due.length) return;
+
+  await prisma.$transaction(async (tx) => {
+    for (const row of due) {
+      await tx.order.update({
+        where: { id: row.id },
+        data: { status: OrderStatus.FULLY_FILLED },
+      });
+      await tx.orderActivity.create({
+        data: {
+          orderId: row.id,
+          message: `Fully filled automatically 30s after broker acknowledgement`,
+          actorName: "EMS",
+        },
+      });
+    }
+  });
+}
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
@@ -35,6 +64,9 @@ export async function GET() {
   const uid = Number(session.user.id);
 
   try {
+    // Opportunistically run the auto-fill engine on every poll.
+    await autoFillMatureAcknowledgedOrders();
+
     if (type === UserType.EQUITY_TRADER) {
       const rows = await prisma.order.findMany({
         where: { traderId: uid },

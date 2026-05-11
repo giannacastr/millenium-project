@@ -33,6 +33,7 @@ const ROLES: {
 export default function PlatformClient() {
   const { data: session } = useSession();
   const selfType = session?.user?.type;
+  const isSuper = Boolean((session?.user as any)?.isSuper);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
@@ -93,6 +94,17 @@ export default function PlatformClient() {
             );
           })}
         </div>
+
+        {isSuper && (
+          <div className="mt-10 text-center">
+            <Link
+              href="/platform/admin"
+              className="inline-flex justify-center rounded-xl bg-white/10 px-4 py-3 text-sm font-medium text-white hover:bg-white/15"
+            >
+              Admin: Portfolio builder
+            </Link>
+          </div>
+        )}
       </div>
     </main>
   );

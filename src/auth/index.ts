@@ -38,6 +38,7 @@ const config = {
           type: user.type,
           enabled: user.enabled,
           pending: user.pending,
+          isSuper: user.isSuper,
         } as any;
       },
     }),
