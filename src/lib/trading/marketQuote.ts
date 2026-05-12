@@ -2,6 +2,7 @@ import { TICKER_META } from "@/lib/trading/exposure";
 
 export type MarketQuoteDTO = {
   symbol: string;
+  companyName: string;
   sector: string;
   last: number;
   /** Session return from regular open → last (day so far). */
@@ -88,6 +89,24 @@ export async function fetchMarketQuote(
       ).catch(() => ({} as FinnhubBidAsk)),
     ]);
 
+    // Diagnostic: log what fields Finnhub returned
+    if (typeof window === "undefined") {
+      // Server-side only
+      console.log(`[Finnhub ${sym}] quote fields:`, {
+        c: q.c,
+        h: q.h,
+        l: q.l,
+        o: q.o,
+        pc: q.pc,
+        v: q.v,
+      });
+      if (bidAsk.b != null || bidAsk.a != null) {
+        console.log(`[Finnhub ${sym}] bidAsk fields:`, { b: bidAsk.b, a: bidAsk.a });
+      } else {
+        console.log(`[Finnhub ${sym}] bidAsk: not available (free tier limitation)`);
+      }
+    }
+
     const price = typeof q.c === "number" && q.c > 0 ? q.c : null;
     const open = typeof q.o === "number" && q.o > 0 ? q.o : null;
     if (price == null) {
@@ -124,6 +143,7 @@ export async function fetchMarketQuote(
       profile.finnhubIndustry?.trim() ||
       TICKER_META[sym]?.sector ||
       "—";
+    const companyName = profile.name?.trim() || sym;
 
     const vol = typeof q.v === "number" && q.v >= 0 ? q.v : null;
     const asOf =
@@ -131,6 +151,7 @@ export async function fetchMarketQuote(
 
     return {
       symbol: sym,
+      companyName,
       sector,
       last: price,
       sessionChangePct,

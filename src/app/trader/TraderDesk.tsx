@@ -49,6 +49,14 @@ export default function TraderDesk() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
   const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
+  const [tickerOptions, setTickerOptions] = useState<string[]>(
+    Object.keys(TICKER_META).sort(),
+  );
+  const [tickerDetails, setTickerDetails] = useState<
+    Record<string, { companyName: string; sector: string; price: number }>
+  >({});
+  const [tickerQuery, setTickerQuery] = useState("MSFT");
+  const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false);
   const [exposureSnapshot, setExposureSnapshot] = useState<{
     exposure: ExposureDTO;
     limits: RiskLimitsDTO;
@@ -88,6 +96,47 @@ export default function TraderDesk() {
     Promise.all([load(), loadExposure()]).finally(() => setLoading(false));
   }, [load, loadExposure]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTickers() {
+      try {
+        const res = await fetch("/api/tickers", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const details: Record<
+          string,
+          { companyName: string; sector: string; price: number }
+        > = {};
+        const symbols = Array.isArray(data.symbols)
+          ? data.symbols
+              .map((item: { symbol?: string; companyName?: string; sector?: string; price?: number }) => {
+                if (item.symbol) {
+                  details[item.symbol] = {
+                    companyName: item.companyName ?? item.symbol,
+                    sector: item.sector ?? "Other",
+                    price: item.price ?? 0,
+                  };
+                }
+                return item.symbol;
+              })
+              .filter((symbol: string | undefined): symbol is string => Boolean(symbol))
+              .sort((a: string, b: string) => a.localeCompare(b))
+          : [];
+        if (!cancelled && symbols.length > 0) {
+          setTickerOptions(symbols);
+          setTickerDetails(details);
+        }
+      } catch {
+        // Keep the local fallback list if the API is unavailable.
+      }
+    }
+
+    void loadTickers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /** Refetch when other roles/tabs advance orders (risk approve, broker ack, etc.). */
   useEffect(() => {
     const poll = window.setInterval(() => {
@@ -111,6 +160,12 @@ export default function TraderDesk() {
     sector: "Other",
     price: 100,
   };
+  const filteredTickers = useMemo(() => {
+    const query = tickerQuery.trim().toUpperCase();
+    const base = [...tickerOptions].sort((a, b) => a.localeCompare(b));
+    if (!query) return base;
+    return base.filter((sym) => sym.toUpperCase().startsWith(query));
+  }, [tickerOptions, tickerQuery]);
   const limitNum =
     ticket.orderType === "LIMIT" && ticket.limitPrice
       ? Number(ticket.limitPrice)
@@ -186,6 +241,7 @@ export default function TraderDesk() {
     if (res.ok) {
       const data = await res.json();
       setDrawerOpen(false);
+      setTickerDropdownOpen(false);
       await load();
       setSelectedId(data.order?.id ?? null);
     }
@@ -505,19 +561,64 @@ export default function TraderDesk() {
               </div>
               <label className="block text-sm">
                 <span className="text-slate-600">Ticker</span>
-                <select
-                  value={ticket.ticker}
-                  onChange={(e) =>
-                    setTicket((t) => ({ ...t, ticker: e.target.value }))
-                  }
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                >
-                  {Object.keys(TICKER_META).map((sym) => (
-                    <option key={sym} value={sym}>
-                      {sym}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative mt-1">
+                  <input
+                    value={tickerQuery}
+                    onChange={(e) => {
+                      const next = e.target.value.toUpperCase();
+                      setTickerQuery(next);
+                      setTickerDropdownOpen(true);
+                      if (filteredTickers.length === 1 && filteredTickers[0] === next) {
+                        setTicket((t) => ({ ...t, ticker: next }));
+                      }
+                    }}
+                    onFocus={() => setTickerDropdownOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setTickerDropdownOpen(false), 120);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const next = filteredTickers[0];
+                        if (next) {
+                          e.preventDefault();
+                          setTicket((t) => ({ ...t, ticker: next }));
+                          setTickerQuery(next);
+                          setTickerDropdownOpen(false);
+                        }
+                      }
+                    }}
+                    className="w-full rounded border border-slate-300 px-3 py-2 font-mono uppercase tracking-wide"
+                    placeholder="Type ticker"
+                    autoComplete="off"
+                  />
+                  {tickerDropdownOpen && filteredTickers.length > 0 && (
+                    <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                      {filteredTickers.map((sym) => (
+                        <button
+                          key={sym}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setTicket((t) => ({ ...t, ticker: sym }));
+                            setTickerQuery(sym);
+                            setTickerDropdownOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-50 ${
+                            sym === ticket.ticker ? "bg-slate-50" : ""
+                          }`}
+                        >
+                          <span className="font-mono font-medium text-slate-900">{sym}</span>
+                          <span className="text-xs text-slate-500">
+                            {tickerDetails[sym]?.companyName ?? TICKER_META[sym]?.companyName ?? sym}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Start typing to filter available tickers in alphabetical order.
+                </p>
               </label>
               <DraftTickerInsight
                 ticker={ticket.ticker}
