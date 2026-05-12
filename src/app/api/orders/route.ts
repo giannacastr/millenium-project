@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import { computeExposureSnapshot } from "@/lib/trading/portfolio";
+import { processSimulatedFillEngine } from "@/lib/trading/fill-engine";
 import { formatOrderTitle } from "@/lib/trading/order-format";
 import {
   OrderDirection,
@@ -17,6 +18,7 @@ const orderInclude = {
   trader: { select: { id: true, name: true, email: true } },
   reviewer: { select: { id: true, name: true } },
   breachLogs: { orderBy: { createdAt: "desc" as const } },
+  fills: { orderBy: { sequence: "asc" as const } },
 };
 
 function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
@@ -24,35 +26,6 @@ function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
     ...o,
     limitPrice: o.limitPrice != null ? String(o.limitPrice) : null,
   };
-}
-
-/** Auto-fill any ACKNOWLEDGED orders that have been waiting >= 30 seconds. */
-async function autoFillMatureAcknowledgedOrders() {
-  const cutoff = new Date(Date.now() - 30_000);
-  const due = await prisma.order.findMany({
-    where: {
-      status: OrderStatus.ACKNOWLEDGED,
-      updatedAt: { lte: cutoff },
-    },
-    select: { id: true },
-  });
-  if (!due.length) return;
-
-  await prisma.$transaction(async (tx) => {
-    for (const row of due) {
-      await tx.order.update({
-        where: { id: row.id },
-        data: { status: OrderStatus.FULLY_FILLED },
-      });
-      await tx.orderActivity.create({
-        data: {
-          orderId: row.id,
-          message: `Fully filled automatically 30s after broker acknowledgement`,
-          actorName: "EMS",
-        },
-      });
-    }
-  });
 }
 
 export async function GET() {
@@ -65,8 +38,8 @@ export async function GET() {
   const uid = Number(session.user.id);
 
   try {
-    // Opportunistically run the auto-fill engine on every poll.
-    await autoFillMatureAcknowledgedOrders();
+    // Opportunistically run the fill engine on every poll.
+    await processSimulatedFillEngine();
 
     if (type === UserType.EQUITY_TRADER) {
       const rows = await prisma.order.findMany({
@@ -171,6 +144,8 @@ export async function POST(req: NextRequest) {
           notes: body.notes ?? "",
           status,
           traderId,
+          filledQuantity: 0,
+          remainingQuantity: body.quantity,
         },
       });
 

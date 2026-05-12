@@ -77,11 +77,17 @@ export async function PATCH(
       strategy: body.strategy ?? existing.strategy,
       notes: body.notes ?? existing.notes,
       title,
+      filledQuantity: 0,
+      remainingQuantity: quantity,
+      averageFillPrice: null,
+      fillStartedAt: null,
+      fillCompletedAt: null,
     },
     include: {
       activities: { orderBy: { createdAt: "asc" } },
       trader: { select: { id: true, name: true, email: true } },
       breachLogs: true,
+      fills: { orderBy: { sequence: "asc" } },
     },
   });
 

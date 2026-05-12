@@ -167,6 +167,8 @@ async function main() {
       notes: "Model signal confirmed",
       status: OrderStatus.SUBMITTED,
       traderId: trader.id,
+      filledQuantity: 0,
+      remainingQuantity: 50000,
     },
   });
 
@@ -210,6 +212,8 @@ async function main() {
       status: OrderStatus.RISK_APPROVED,
       traderId: trader.id,
       reviewedById: risk.id,
+      filledQuantity: 0,
+      remainingQuantity: 15000,
     },
   });
 

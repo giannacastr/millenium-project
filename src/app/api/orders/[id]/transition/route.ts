@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { initializeOrderFillSimulation } from "@/lib/trading/fill-engine";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import {
@@ -76,6 +77,7 @@ export async function POST(
     include: {
       activities: { orderBy: { createdAt: "asc" } },
       trader: true,
+      fills: { orderBy: { sequence: "asc" } },
     },
   });
 
@@ -138,19 +140,30 @@ export async function POST(
       }
       if (
         order.status !== OrderStatus.DRAFT &&
-        order.status !== OrderStatus.SUBMITTED
+        order.status !== OrderStatus.SUBMITTED &&
+        order.status !== OrderStatus.IN_REVIEW &&
+        order.status !== OrderStatus.RISK_APPROVED &&
+        order.status !== OrderStatus.ACKNOWLEDGED &&
+        order.status !== OrderStatus.PARTIALLY_FILLED
       ) {
         return NextResponse.json({ error: "Cannot cancel" }, { status: 400 });
       }
+      const cancelledPartial = (order.filledQuantity ?? 0) > 0 || order.fills.length > 0;
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.CANCELLED },
+          data: {
+            status: cancelledPartial
+              ? OrderStatus.CANCELLED_PARTIAL
+              : OrderStatus.CANCELLED,
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Cancelled by ${actorName}`,
+            message: cancelledPartial
+              ? `Cancelled by ${actorName} after partial fills`
+              : `Cancelled by ${actorName}`,
             actorName,
           },
         });
@@ -212,6 +225,7 @@ export async function POST(
           },
         });
       });
+      await initializeOrderFillSimulation(orderId);
     } else if (body.action === "risk_reject") {
       if (userType !== UserType.RISK_OFFICER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -288,14 +302,38 @@ export async function POST(
         return NextResponse.json({ error: "Invalid state" }, { status: 400 });
       }
       await prisma.$transaction(async (tx) => {
+        const fillQty = Math.min(body.filledQty, order.quantity - (order.filledQuantity ?? 0));
+        if (fillQty <= 0) {
+          throw new Error("No remaining quantity to fill");
+        }
+        const nextFilled = (order.filledQuantity ?? 0) + fillQty;
+        const avg =
+          order.averageFillPrice != null && order.filledQuantity > 0
+            ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
+              nextFilled
+            : body.price;
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.PARTIALLY_FILLED },
+          data: {
+            status: OrderStatus.PARTIALLY_FILLED,
+            filledQuantity: nextFilled,
+            remainingQuantity: Math.max(0, order.quantity - nextFilled),
+            averageFillPrice: avg,
+          },
+        });
+        await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Partial fill: ${body.filledQty.toLocaleString()} shares @ $${body.price.toFixed(2)}`,
+            message: `Partial fill: ${fillQty.toLocaleString()} shares @ $${body.price.toFixed(2)}`,
             actorName: "EMS",
           },
         });
@@ -305,9 +343,31 @@ export async function POST(
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       await prisma.$transaction(async (tx) => {
+        const fillQty = Math.max(0, order.quantity - (order.filledQuantity ?? 0));
+        const nextFilled = order.quantity;
+        const avg =
+          order.averageFillPrice != null && order.filledQuantity > 0
+            ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
+              nextFilled
+            : body.price;
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.FULLY_FILLED },
+          data: {
+            status: OrderStatus.FULLY_FILLED,
+            filledQuantity: nextFilled,
+            remainingQuantity: 0,
+            averageFillPrice: avg,
+            fillCompletedAt: new Date(),
+          },
+        });
+        await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -326,6 +386,7 @@ export async function POST(
         trader: { select: { id: true, name: true, email: true } },
         reviewer: { select: { id: true, name: true } },
         breachLogs: { orderBy: { createdAt: "desc" } },
+        fills: { orderBy: { sequence: "asc" } },
       },
     });
 

@@ -2,10 +2,7 @@
 
 import { useMemo } from "react";
 import type { OrderStatus } from "@prisma/client";
-import {
-  type OrderForExecution,
-  resolveExecutionFill,
-} from "@/lib/trading/executionFill";
+import { type OrderForExecution, resolveExecutionFill } from "@/lib/trading/executionFill";
 
 const PENDING_STATUSES: OrderStatus[] = [
   "SUBMITTED",
@@ -45,8 +42,7 @@ function pendingStageClass(status: OrderStatus): string {
 }
 
 function fmtPriceRef(orderType: string, limitPrice: string | null) {
-  if (orderType === "LIMIT" && limitPrice)
-    return `$${Number(limitPrice).toFixed(2)}`;
+  if (orderType === "LIMIT" && limitPrice) return `$${Number(limitPrice).toFixed(2)}`;
   if (orderType === "MARKET") return "MKT";
   if (orderType === "VWAP") return "VWAP";
   return "—";
@@ -67,6 +63,13 @@ export type ExpandOrder = {
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  filledQuantity: number;
+  remainingQuantity: number;
+  averageFillPrice: number | null;
+  arrivalPrice: number | null;
+  fillStartedAt: string | null;
+  fillCompletedAt: string | null;
+  fills: { id: number; sequence: number; quantity: number; price: number; executedAt: string }[];
   activities: {
     id: number;
     message: string;
@@ -80,22 +83,63 @@ type Props = {
   onRunTransition: (body: Record<string, unknown>) => void;
 };
 
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function getExecutionSummary(o: ExpandOrder) {
+  const hasEngineFills = o.fills.length > 0 || o.filledQuantity > 0;
+  if (!hasEngineFills) {
+    if (o.status === "PARTIALLY_FILLED" || o.status === "FULLY_FILLED") {
+      return resolveExecutionFill(o as OrderForExecution);
+    }
+    return null;
+  }
+
+  const weightedNotional = o.fills.reduce(
+    (sum, fillRow) => sum + fillRow.quantity * fillRow.price,
+    0,
+  );
+  const filledQty = o.fills.reduce((sum, fillRow) => sum + fillRow.quantity, 0) || o.filledQuantity;
+  const avgPrice = filledQty > 0 ? weightedNotional / filledQty : o.averageFillPrice ?? 0;
+  const lastFill = o.fills[o.fills.length - 1];
+
+  return {
+    timeIso: lastFill?.executedAt ?? o.updatedAt,
+    qty: filledQty,
+    price: avgPrice,
+    fillLabel: o.status === "FULLY_FILLED" ? "Filled" : "Partial",
+  } as const;
+}
+
 export default function OrderExecutionExpand({
   order: o,
   onRunTransition,
 }: Props) {
-  const fill = useMemo(() => {
-    if (o.status !== "PARTIALLY_FILLED" && o.status !== "FULLY_FILLED")
-      return null;
-    return resolveExecutionFill(o as OrderForExecution);
-  }, [o]);
+  const fill = useMemo(() => getExecutionSummary(o), [o]);
 
-  const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+  const showFillDetail = o.fills.length > 0 || o.status === "PARTIALLY_FILLED" || o.status === "FULLY_FILLED" || o.status === "CANCELLED_PARTIAL";
+
+  const tca = useMemo(() => {
+    if (o.arrivalPrice == null || o.averageFillPrice == null || o.filledQuantity <= 0) {
+      return null;
+    }
+    const slippagePerShare = o.averageFillPrice - o.arrivalPrice;
+    const favorable = o.direction === "BUY" ? slippagePerShare < 0 : slippagePerShare > 0;
+    const total = Math.abs(slippagePerShare * o.filledQuantity);
+    return {
+      arrivalPrice: o.arrivalPrice,
+      averageFillPrice: o.averageFillPrice,
+      slippagePerShare,
+      total,
+      label: favorable ? "saved" : "cost",
+      favorable,
+    };
+  }, [o.arrivalPrice, o.averageFillPrice, o.direction, o.filledQuantity]);
 
   const executionLead = PENDING_STATUSES.includes(o.status) ? (
     <div className="flex flex-wrap items-center gap-2">
@@ -105,34 +149,42 @@ export default function OrderExecutionExpand({
         {pendingStageLabel(o.status)}
       </span>
       <span className="text-xs text-slate-500">
-        Updated {fmtTime(o.updatedAt)} · ref {fmtPriceRef(o.orderType, o.limitPrice)} ·{" "}
-        {o.strategy}
+        Updated {fmtTime(o.updatedAt)} · ref {fmtPriceRef(o.orderType, o.limitPrice)} · {o.strategy}
       </span>
     </div>
   ) : fill ? (
     <div className="flex flex-wrap items-center gap-2">
       <span
         className={
-          fill.fillLabel === "Filled"
+          o.status === "FULLY_FILLED"
             ? "inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800"
-            : "inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-900"
+            : o.status === "CANCELLED_PARTIAL"
+              ? "inline-flex rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-900"
+              : "inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-900"
         }
       >
-        {fill.fillLabel === "Filled" ? "Fully filled" : "Partial fill"}
+        {o.status === "FULLY_FILLED"
+          ? "Fully filled"
+          : o.status === "CANCELLED_PARTIAL"
+            ? "Cancelled (partial)"
+            : "Partially filled"}
       </span>
       <span className="font-mono text-xs text-slate-600">
         {fill.qty.toLocaleString()} @ ${fill.price.toFixed(2)} · {fmtTime(fill.timeIso)}
       </span>
+      <span className="text-xs text-slate-500">
+        {o.filledQuantity.toLocaleString()} / {o.quantity.toLocaleString()} filled
+      </span>
     </div>
   ) : (
     <p className="text-sm text-slate-600">
-      {o.status === "DRAFT" &&
-        "Draft — not in the risk → broker → execution pipeline yet."}
-      {(o.status === "REJECTED" || o.status === "CANCELLED") &&
-        `${o.status === "REJECTED" ? "Rejected" : "Cancelled"} — see activity below.`}
+      {o.status === "DRAFT" && "Draft — not in the risk → broker → execution pipeline yet."}
+      {(o.status === "REJECTED" || o.status === "CANCELLED" || o.status === "CANCELLED_PARTIAL") &&
+        `${o.status === "REJECTED" ? "Rejected" : o.status === "CANCELLED_PARTIAL" ? "Cancelled (partial)" : "Cancelled"} — see activity below.`}
       {o.status !== "DRAFT" &&
         o.status !== "REJECTED" &&
         o.status !== "CANCELLED" &&
+        o.status !== "CANCELLED_PARTIAL" &&
         "No execution detail for this state."}
     </p>
   );
@@ -143,6 +195,7 @@ export default function OrderExecutionExpand({
         <p className="font-mono text-sm text-blue-600">{o.ticketKey}</p>
         <h2 className="text-lg font-semibold text-slate-900">{o.title}</h2>
       </div>
+
       <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
           Execution & pipeline
@@ -206,7 +259,84 @@ export default function OrderExecutionExpand({
             Complete fill
           </button>
         )}
+        {(o.status === "RISK_APPROVED" || o.status === "ACKNOWLEDGED" || o.status === "PARTIALLY_FILLED") && (
+          <button
+            type="button"
+            className="rounded-lg border border-rose-300 px-3 py-2 text-sm text-rose-700"
+            onClick={() => onRunTransition({ action: "cancel" })}
+          >
+            Cancel order
+          </button>
+        )}
       </div>
+
+      {showFillDetail && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Fills
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Fill ID</th>
+                  <th className="px-3 py-2">Time</th>
+                  <th className="px-3 py-2">Qty</th>
+                  <th className="px-3 py-2">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {o.fills.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      No persisted fills yet.
+                    </td>
+                  </tr>
+                ) : (
+                  o.fills.map((fillRow) => (
+                    <tr key={fillRow.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-mono text-xs text-blue-700">
+                        #{fillRow.id}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-500">
+                        {fmtTime(fillRow.executedAt)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        {fillRow.quantity.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums text-slate-700">
+                        ${fillRow.price.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {tca && (
+            <div className="mt-4 rounded-lg bg-slate-50 p-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                TCA summary
+              </h4>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <dt className="text-slate-500">Arrival price</dt>
+                <dd className="font-mono text-slate-900">${tca.arrivalPrice.toFixed(2)}</dd>
+                <dt className="text-slate-500">Average fill price</dt>
+                <dd className="font-mono text-slate-900">${tca.averageFillPrice.toFixed(2)}</dd>
+                <dt className="text-slate-500">Slippage / share</dt>
+                <dd className={`font-mono ${tca.favorable ? "text-emerald-700" : "text-rose-700"}`}>
+                  {tca.slippagePerShare >= 0 ? "+" : ""}${tca.slippagePerShare.toFixed(2)}
+                </dd>
+                <dt className="text-slate-500">Total {tca.label}</dt>
+                <dd className={`font-mono font-semibold ${tca.favorable ? "text-emerald-700" : "text-rose-700"}`}>
+                  {tca.label} ${tca.total.toFixed(2)}
+                </dd>
+              </dl>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-3 text-sm">
@@ -226,8 +356,7 @@ export default function OrderExecutionExpand({
             <dd>{o.strategy}</dd>
           </dl>
           <p className="text-slate-600">
-            <span className="font-medium text-slate-700">Notes:</span>{" "}
-            {o.notes || "—"}
+            <span className="font-medium text-slate-700">Notes:</span> {o.notes || "—"}
           </p>
         </div>
         <div>

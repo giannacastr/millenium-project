@@ -33,6 +33,7 @@ enum OrderStatus {
   ACKNOWLEDGED
   PARTIALLY_FILLED
   FULLY_FILLED
+  CANCELLED_PARTIAL
   REJECTED
   CANCELLED
 }
@@ -101,9 +102,9 @@ model PasswordResetToken {
 }
 
 model Order {
-  id       Int    @id @default(autoincrement())
+  id        Int    @id @default(autoincrement())
   ticketKey String @unique
-  title    String?
+  title     String?
 
   direction   OrderDirection
   ticker      String
@@ -115,6 +116,13 @@ model Order {
   notes       String?
 
   status OrderStatus @default(DRAFT)
+
+  fillStartedAt    DateTime?
+  fillCompletedAt  DateTime?
+  arrivalPrice     Float?
+  averageFillPrice Float?
+  filledQuantity   Int      @default(0)
+  remainingQuantity Int     @default(0)
 
   traderId Int
   trader   User @relation("TraderOrders", fields: [traderId], references: [id])
@@ -132,10 +140,24 @@ model Order {
 
   activities OrderActivity[]
   breachLogs RiskBreachLog[]
+  fills      OrderFill[]
 
   @@index([status])
   @@index([traderId])
   @@index([createdAt])
+}
+
+model OrderFill {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence   Int
+  quantity   Int
+  price      Float
+  executedAt DateTime @default(now())
+
+  @@index([orderId])
+  @@unique([orderId, sequence])
 }
 
 model OrderActivity {

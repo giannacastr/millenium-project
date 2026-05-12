@@ -36,6 +36,13 @@ type ApiOrder = {
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  filledQuantity: number;
+  remainingQuantity: number;
+  averageFillPrice: number | null;
+  arrivalPrice: number | null;
+  fillStartedAt: string | null;
+  fillCompletedAt: string | null;
+  fills: { id: number; sequence: number; quantity: number; price: number; executedAt: string }[];
   activities: { id: number; message: string; actorName: string | null; createdAt: string }[];
   trader: { name: string };
 };
@@ -216,7 +223,12 @@ export default function TraderDesk() {
       if (o.status === "IN_REVIEW") c.inReview++;
       if (o.status === "PARTIALLY_FILLED" || o.status === "FULLY_FILLED")
         c.filled++;
-      if (o.status === "REJECTED" || o.status === "CANCELLED") c.rejected++;
+      if (
+        o.status === "REJECTED" ||
+        o.status === "CANCELLED" ||
+        o.status === "CANCELLED_PARTIAL"
+      )
+        c.rejected++;
     }
     return c;
   }, [orders]);
@@ -348,19 +360,20 @@ export default function TraderDesk() {
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Qty</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Avg Px</th>
                   <th className="px-4 py-3">Time</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                       No orders in this filter.
                     </td>
                   </tr>
@@ -398,11 +411,23 @@ export default function TraderDesk() {
                             {o.quantity.toLocaleString()}
                           </td>
                           <td className="px-4 py-3">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
-                            >
-                              {STATUS_LABEL[o.status]}
-                            </span>
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
+                              >
+                                {STATUS_LABEL[o.status]}
+                              </span>
+                              {o.filledQuantity > 0 && (
+                                <span className="text-xs text-slate-500">
+                                  {o.filledQuantity.toLocaleString()} / {o.quantity.toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-700">
+                            {o.averageFillPrice != null
+                              ? `$${o.averageFillPrice.toFixed(2)}`
+                              : "—"}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-500">
                             {new Date(o.createdAt).toLocaleTimeString([], {
@@ -413,7 +438,7 @@ export default function TraderDesk() {
                         </tr>
                         {expanded && (
                           <tr className="border-b border-slate-200 bg-slate-50/50">
-                            <td colSpan={8} className="p-0 align-top">
+                            <td colSpan={9} className="p-0 align-top">
                               <OrderExecutionExpand
                                 order={o}
                                 onRunTransition={(body) =>
