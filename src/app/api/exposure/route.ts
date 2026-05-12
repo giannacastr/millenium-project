@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { INITIAL_EXPOSURE, LIMITS } from "@/lib/trading/exposure";
+import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -8,5 +8,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({ exposure: INITIAL_EXPOSURE, limits: LIMITS });
+  const snapshot = await computeExposureSnapshot();
+  return NextResponse.json(snapshot, {
+    headers: { "Cache-Control": "private, max-age=5, stale-while-revalidate=10" },
+  });
 }

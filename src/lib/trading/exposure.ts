@@ -34,15 +34,15 @@ export const INITIAL_EXPOSURE = {
 
 export const TICKER_META: Record<
   string,
-  { sector: string; price: number }
+  { companyName: string; sector: string; price: number }
 > = {
-  MSFT: { sector: "Technology", price: 412 },
-  AAPL: { sector: "Technology", price: 189 },
-  NVDA: { sector: "Technology", price: 936 },
-  JPM: { sector: "Financials", price: 198 },
-  XOM: { sector: "Energy", price: 121 },
-  UNH: { sector: "Health Care", price: 476 },
-  PG: { sector: "Consumer Staples", price: 157 },
+  MSFT: { companyName: "Microsoft", sector: "Technology", price: 412 },
+  AAPL: { companyName: "Apple", sector: "Technology", price: 189 },
+  NVDA: { companyName: "NVIDIA", sector: "Technology", price: 936 },
+  JPM: { companyName: "JPMorgan Chase", sector: "Financials", price: 198 },
+  XOM: { companyName: "Exxon Mobil", sector: "Energy", price: 121 },
+  UNH: { companyName: "UnitedHealth Group", sector: "Health Care", price: 476 },
+  PG: { companyName: "Procter & Gamble", sector: "Consumer Staples", price: 157 },
 };
 
 export const ACCOUNT_OPTIONS = ["Long Book", "Short Book", "Macro Sleeve"];

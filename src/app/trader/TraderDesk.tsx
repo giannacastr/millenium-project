@@ -5,10 +5,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
 import {
   ACCOUNT_OPTIONS,
-  INITIAL_EXPOSURE,
   STRATEGY_OPTIONS,
   TICKER_META,
 } from "@/lib/trading/exposure";
+import type { ExposureDTO, RiskLimitsDTO } from "@/lib/trading/portfolio";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import {
   BlotterFilter,
@@ -16,6 +16,8 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
+import Top5Positions from "@/components/Top5Positions";
 import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
 
@@ -46,6 +48,19 @@ export default function TraderDesk() {
   const [bucket, setBucket] = useState<BlotterFilter>("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
+  const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
+  const [tickerOptions, setTickerOptions] = useState<string[]>(
+    Object.keys(TICKER_META).sort(),
+  );
+  const [tickerDetails, setTickerDetails] = useState<
+    Record<string, { companyName: string; sector: string; price: number }>
+  >({});
+  const [tickerQuery, setTickerQuery] = useState("MSFT");
+  const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false);
+  const [exposureSnapshot, setExposureSnapshot] = useState<{
+    exposure: ExposureDTO;
+    limits: RiskLimitsDTO;
+  } | null>(null);
 
   const [ticket, setTicket] = useState({
     direction: "BUY" as "BUY" | "SELL" | "SHORT",
@@ -65,29 +80,92 @@ export default function TraderDesk() {
     setOrders(data.orders ?? []);
   }, []);
 
+  const loadExposure = useCallback(async () => {
+    const res = await fetch("/api/exposure", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.exposure && data.limits) {
+      setExposureSnapshot({
+        exposure: data.exposure as ExposureDTO,
+        limits: data.limits as RiskLimitsDTO,
+      });
+    }
+  }, []);
+
   useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+    Promise.all([load(), loadExposure()]).finally(() => setLoading(false));
+  }, [load, loadExposure]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTickers() {
+      try {
+        const res = await fetch("/api/tickers", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const details: Record<
+          string,
+          { companyName: string; sector: string; price: number }
+        > = {};
+        const symbols = Array.isArray(data.symbols)
+          ? data.symbols
+              .map((item: { symbol?: string; companyName?: string; sector?: string; price?: number }) => {
+                if (item.symbol) {
+                  details[item.symbol] = {
+                    companyName: item.companyName ?? item.symbol,
+                    sector: item.sector ?? "Other",
+                    price: item.price ?? 0,
+                  };
+                }
+                return item.symbol;
+              })
+              .filter((symbol: string | undefined): symbol is string => Boolean(symbol))
+              .sort((a: string, b: string) => a.localeCompare(b))
+          : [];
+        if (!cancelled && symbols.length > 0) {
+          setTickerOptions(symbols);
+          setTickerDetails(details);
+        }
+      } catch {
+        // Keep the local fallback list if the API is unavailable.
+      }
+    }
+
+    void loadTickers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /** Refetch when other roles/tabs advance orders (risk approve, broker ack, etc.). */
   useEffect(() => {
     const poll = window.setInterval(() => {
       void load();
+      void loadExposure();
     }, 8000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") {
+        void load();
+        void loadExposure();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(poll);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, loadExposure]);
 
   const tickerMeta = TICKER_META[ticket.ticker] ?? {
     sector: "Other",
     price: 100,
   };
+  const filteredTickers = useMemo(() => {
+    const query = tickerQuery.trim().toUpperCase();
+    const base = [...tickerOptions].sort((a, b) => a.localeCompare(b));
+    if (!query) return base;
+    return base.filter((sym) => sym.toUpperCase().startsWith(query));
+  }, [tickerOptions, tickerQuery]);
   const limitNum =
     ticket.orderType === "LIMIT" && ticket.limitPrice
       ? Number(ticket.limitPrice)
@@ -96,7 +174,17 @@ export default function TraderDesk() {
     ticker: ticket.ticker,
     quantity: ticket.quantity,
     limitPrice: limitNum,
+    livePrice: liveLastPrice,
+    direction: ticket.direction,
+    portfolio: exposureSnapshot ?? undefined,
   });
+
+  const fmtNav = (n: number) => {
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}MM`;
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+    return `$${n.toFixed(0)}`;
+  };
 
   const filtered = useMemo(() => {
     let rows = orders.filter((o) => filterForBucket(o.status, bucket));
@@ -153,6 +241,7 @@ export default function TraderDesk() {
     if (res.ok) {
       const data = await res.json();
       setDrawerOpen(false);
+      setTickerDropdownOpen(false);
       await load();
       setSelectedId(data.order?.id ?? null);
     }
@@ -344,26 +433,96 @@ export default function TraderDesk() {
         </div>
 
         <aside className="space-y-4">
+          <Top5Positions exposure={exposureSnapshot?.exposure ?? null} />
+
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="mb-3 text-sm font-semibold text-slate-900">
-              Position monitor
+              Portfolio snapshot
             </h3>
             <p className="mb-3 text-xs text-slate-500">
-              Live snapshot (demo data)
+              Holdings + open-order reservation from the server; prices via Finnhub.
+              Refreshes with the blotter poll.
             </p>
-            <div className="space-y-2 text-sm">
-              {INITIAL_EXPOSURE.topSingleNames.slice(0, 8).map((p) => (
-                <div
-                  key={p.ticker}
-                  className="flex justify-between border-b border-slate-100 py-1"
-                >
-                  <span className="font-medium">{p.ticker}</span>
-                  <span className="tabular-nums text-slate-600">
-                    {p.weight}%
-                  </span>
+            {exposureSnapshot ? (
+              <>
+                <dl className="mb-3 grid grid-cols-2 gap-2 text-xs">
+                  <dt className="text-slate-500">NAV (holdings)</dt>
+                  <dd className="text-right font-mono font-medium text-slate-900">
+                    {fmtNav(exposureSnapshot.exposure.totalValue)}
+                  </dd>
+                  <dt className="text-slate-500">BP used</dt>
+                  <dd className="text-right font-mono text-slate-800">
+                    {exposureSnapshot.exposure.buyingPowerUsed.toFixed(1)}%
+                    <span className="text-slate-400">
+                      {" "}
+                      / cap {exposureSnapshot.limits.buyingPowerUsedCapPct}%
+                    </span>
+                  </dd>
+                  <dt className="text-slate-500">BP remaining</dt>
+                  <dd className="text-right font-mono text-emerald-800">
+                    {exposureSnapshot.exposure.buyingPowerRemaining}
+                  </dd>
+                  <dt className="text-slate-500">Open orders</dt>
+                  <dd className="text-right font-mono text-slate-700">
+                    {fmtNav(exposureSnapshot.exposure.openOrderNotional)}
+                  </dd>
+                </dl>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Single-name weight (cap {exposureSnapshot.limits.singleNameCapPct}%)
+                </p>
+                <div className="max-h-44 space-y-2 overflow-y-auto text-sm">
+                  {(exposureSnapshot.exposure.topSingleNames ?? [])
+                    .slice(0, 8)
+                    .map((p) => (
+                      <div
+                        key={p.ticker}
+                        className="flex justify-between border-b border-slate-100 py-1"
+                      >
+                        <span className="font-medium">{p.ticker}</span>
+                        <span
+                          className={`tabular-nums ${
+                            p.weight >= exposureSnapshot.limits.singleNameCapPct * 0.95
+                              ? "font-medium text-rose-700"
+                              : "text-slate-600"
+                          }`}
+                        >
+                          {p.weight}%
+                        </span>
+                      </div>
+                    ))}
                 </div>
-              ))}
-            </div>
+                <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Sector sleeves (cap {exposureSnapshot.limits.sectorCapPct}%)
+                </p>
+                <div className="max-h-36 space-y-1 overflow-y-auto text-xs">
+                  {Object.entries(exposureSnapshot.exposure.sectorWeights)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 6)
+                    .map(([sector, w]) => (
+                      <div
+                        key={sector}
+                        className="flex justify-between border-b border-slate-50 py-0.5"
+                      >
+                        <span className="truncate pr-2 text-slate-700">{sector}</span>
+                        <span
+                          className={
+                            w >= exposureSnapshot.limits.sectorCapPct * 0.95
+                              ? "font-medium text-rose-700"
+                              : "tabular-nums text-slate-600"
+                          }
+                        >
+                          {w}%
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No exposure data yet. Seed the database or check{" "}
+                <span className="font-mono text-xs">/api/exposure</span>.
+              </p>
+            )}
           </section>
         </aside>
       </div>
@@ -402,21 +561,69 @@ export default function TraderDesk() {
               </div>
               <label className="block text-sm">
                 <span className="text-slate-600">Ticker</span>
-                <select
-                  value={ticket.ticker}
-                  onChange={(e) =>
-                    setTicket((t) => ({ ...t, ticker: e.target.value }))
-                  }
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                >
-                  {Object.keys(TICKER_META).map((sym) => (
-                    <option key={sym} value={sym}>
-                      {sym}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative mt-1">
+                  <input
+                    value={tickerQuery}
+                    onChange={(e) => {
+                      const next = e.target.value.toUpperCase();
+                      setTickerQuery(next);
+                      setTickerDropdownOpen(true);
+                      if (filteredTickers.length === 1 && filteredTickers[0] === next) {
+                        setTicket((t) => ({ ...t, ticker: next }));
+                      }
+                    }}
+                    onFocus={() => setTickerDropdownOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setTickerDropdownOpen(false), 120);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const next = filteredTickers[0];
+                        if (next) {
+                          e.preventDefault();
+                          setTicket((t) => ({ ...t, ticker: next }));
+                          setTickerQuery(next);
+                          setTickerDropdownOpen(false);
+                        }
+                      }
+                    }}
+                    className="w-full rounded border border-slate-300 px-3 py-2 font-mono uppercase tracking-wide"
+                    placeholder="Type ticker"
+                    autoComplete="off"
+                  />
+                  {tickerDropdownOpen && filteredTickers.length > 0 && (
+                    <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                      {filteredTickers.map((sym) => (
+                        <button
+                          key={sym}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setTicket((t) => ({ ...t, ticker: sym }));
+                            setTickerQuery(sym);
+                            setTickerDropdownOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-50 ${
+                            sym === ticket.ticker ? "bg-slate-50" : ""
+                          }`}
+                        >
+                          <span className="font-mono font-medium text-slate-900">{sym}</span>
+                          <span className="text-xs text-slate-500">
+                            {tickerDetails[sym]?.companyName ?? TICKER_META[sym]?.companyName ?? sym}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Start typing to filter available tickers in alphabetical order.
+                </p>
               </label>
-              <DraftTickerInsight ticker={ticket.ticker} />
+              <DraftTickerInsight
+                ticker={ticket.ticker}
+                onLastPrice={setLiveLastPrice}
+              />
               <label className="block text-sm">
                 <span className="text-slate-600">Quantity</span>
                 <input
@@ -505,28 +712,37 @@ export default function TraderDesk() {
                 />
               </label>
 
-              <div className="rounded-lg bg-slate-50 p-4 text-sm">
-                <h4 className="mb-2 font-semibold text-slate-800">
-                  Pre-trade impact (simulated)
-                </h4>
-                <ul className="space-y-1 text-slate-600">
-                  <li>
-                    Single-name weight (sim after):{" "}
-                    <strong>{impact.singleNameAfter.toFixed(1)}%</strong>
-                  </li>
-                  <li>
-                    Sector sleeve (sim after):{" "}
-                    <strong>{impact.sectorAfter.toFixed(1)}%</strong>
-                  </li>
-                  <li>
-                    Buying power used (sim):{" "}
-                    <strong>{impact.buyingPowerAfter.toFixed(1)}%</strong>
-                  </li>
-                </ul>
-                {impact.triggeredChecks.length > 0 && (
-                  <p className="mt-2 text-amber-700">
-                    Flags: {impact.triggeredChecks.join(", ")}
-                  </p>
+              <div className="rounded-lg bg-slate-50 p-4">
+                {exposureSnapshot ? (
+                  <PreTradeImpactAnalysis
+                    impact={impact}
+                    limits={exposureSnapshot.limits}
+                  />
+                ) : (
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold text-slate-800">
+                      Pre-trade impact (legacy demo curve)
+                    </h4>
+                    <ul className="space-y-1 text-sm text-slate-600">
+                      <li>
+                        Single-name weight (sim after):{" "}
+                        <strong>{impact.singleNameAfter.toFixed(1)}%</strong>
+                      </li>
+                      <li>
+                        Sector sleeve (sim after):{" "}
+                        <strong>{impact.sectorAfter.toFixed(1)}%</strong>
+                      </li>
+                      <li>
+                        Buying power used (sim):{" "}
+                        <strong>{impact.buyingPowerAfter.toFixed(1)}%</strong>
+                      </li>
+                    </ul>
+                    {impact.triggeredChecks.length > 0 && (
+                      <p className="mt-2 text-amber-700">
+                        Flags: {impact.triggeredChecks.join(", ")}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 

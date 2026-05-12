@@ -8,6 +8,7 @@ declare module "next-auth" {
       type: UserType;
       enabled: boolean;
       pending: boolean;
+      isSuper?: boolean;
     };
   }
 }
@@ -18,5 +19,6 @@ declare module "next-auth/jwt" {
     type?: UserType;
     enabled?: boolean;
     pending?: boolean;
+    isSuper?: boolean;
   }
 }

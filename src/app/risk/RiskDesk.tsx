@@ -3,7 +3,7 @@
 import { useSession, signOut } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
-import { INITIAL_EXPOSURE, LIMITS } from "@/lib/trading/exposure";
+import type { ExposureDTO, RiskLimitsDTO } from "@/lib/trading/portfolio";
 import { STATUS_LABEL, statusPillClass } from "@/lib/trading/status-ui";
 
 type ApiOrder = {
@@ -40,6 +40,8 @@ export default function RiskDesk() {
   const [breaches, setBreaches] = useState<BreachRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [exposure, setExposure] = useState<ExposureDTO | null>(null);
+  const [limits, setLimits] = useState<RiskLimitsDTO | null>(null);
 
   const load = useCallback(async () => {
     const [or, br] = await Promise.all([
@@ -50,9 +52,17 @@ export default function RiskDesk() {
     setBreaches(br.breaches ?? []);
   }, []);
 
+  const loadExposure = useCallback(async () => {
+    const res = await fetch("/api/exposure", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    setExposure(data.exposure ?? null);
+    setLimits(data.limits ?? null);
+  }, []);
+
   useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+    Promise.all([load(), loadExposure()]).finally(() => setLoading(false));
+  }, [load, loadExposure]);
 
   const queue = useMemo(
     () =>
@@ -286,16 +296,18 @@ export default function RiskDesk() {
               <div className="relative mx-auto h-56 w-56 rounded-full border-[12px] border-dashed border-slate-300">
                 <div className="absolute inset-4 flex flex-col justify-center rounded-full bg-slate-50 p-4 text-center text-xs">
                   <p className="font-semibold">GICS sleeve</p>
-                  <p className="text-slate-500">Dashed ring = {LIMITS.sector}% cap</p>
+                  <p className="text-slate-500">
+                    Dashed ring = {limits?.sectorCapPct ?? "—"}% cap
+                  </p>
                 </div>
               </div>
               <ul className="mt-4 space-y-2 text-sm">
-                {Object.entries(INITIAL_EXPOSURE.sectorWeights).map(
+                {Object.entries(exposure?.sectorWeights ?? {}).map(
                   ([s, w]) => (
                     <li key={s} className="flex justify-between">
                       <span>{s}</span>
                       <span>
-                        {w}% / cap {LIMITS.sector}%
+                        {w}% / cap {limits?.sectorCapPct ?? "—"}%
                       </span>
                     </li>
                   ),
@@ -310,19 +322,19 @@ export default function RiskDesk() {
               <div className="relative mb-2 h-px bg-slate-200">
                 <span
                   className="absolute -top-2 right-0 text-[10px] text-red-600"
-                  style={{ left: `${LIMITS.singleName * 8}%` }}
+                  style={{ left: `${(limits?.singleNameCapPct ?? 10) * 8}%` }}
                 >
-                  Limit {LIMITS.singleName}%
+                  Limit {limits?.singleNameCapPct ?? "—"}%
                 </span>
               </div>
               <div className="space-y-2">
-                {INITIAL_EXPOSURE.topSingleNames.map((p) => (
+                {(exposure?.topSingleNames ?? []).map((p) => (
                   <div key={p.ticker} className="flex items-center gap-2 text-sm">
                     <span className="w-16">{p.ticker}</span>
                     <div className="relative h-6 flex-1 rounded bg-slate-100">
                       <div
                         className={`absolute left-0 top-0 h-full rounded ${
-                          p.weight >= LIMITS.singleName * 0.95
+                          p.weight >= (limits?.singleNameCapPct ?? 10) * 0.95
                             ? "bg-red-500"
                             : "bg-blue-500"
                         }`}
@@ -343,15 +355,15 @@ export default function RiskDesk() {
                     <div
                       className="absolute bottom-0 left-0 right-0 bg-blue-500 transition-all"
                       style={{
-                        height: `${(INITIAL_EXPOSURE.grossExposure / LIMITS.grossExposure) * 100}%`,
+                        height: `${((exposure?.grossExposure ?? 0) / (limits?.grossExposureCapPct ?? 180)) * 100}%`,
                       }}
                     />
                   </div>
                   <p className="mt-2 text-2xl font-bold">
-                    {INITIAL_EXPOSURE.grossExposure}%
+                    {exposure?.grossExposure ?? "—"}%
                   </p>
                   <p className="text-xs text-slate-500">
-                    vs limit {LIMITS.grossExposure}%
+                    vs limit {limits?.grossExposureCapPct ?? "—"}%
                   </p>
                 </div>
                 <div className="text-center">
@@ -360,15 +372,15 @@ export default function RiskDesk() {
                     <div
                       className="absolute bottom-0 left-0 right-0 bg-indigo-500"
                       style={{
-                        height: `${(INITIAL_EXPOSURE.netExposure / LIMITS.netExposure) * 100}%`,
+                        height: `${((exposure?.netExposure ?? 0) / (limits?.netExposureCapPct ?? 70)) * 100}%`,
                       }}
                     />
                   </div>
                   <p className="mt-2 text-2xl font-bold">
-                    {INITIAL_EXPOSURE.netExposure}%
+                    {exposure?.netExposure ?? "—"}%
                   </p>
                   <p className="text-xs text-slate-500">
-                    vs limit {LIMITS.netExposure}%
+                    vs limit {limits?.netExposureCapPct ?? "—"}%
                   </p>
                 </div>
                 <div className="flex flex-col items-center justify-center rounded-lg bg-emerald-50 p-6">
@@ -376,7 +388,7 @@ export default function RiskDesk() {
                     Buying power remaining
                   </p>
                   <p className="mt-2 text-4xl font-bold tracking-tight text-emerald-900">
-                    {INITIAL_EXPOSURE.buyingPowerRemaining}
+                    {exposure?.buyingPowerRemaining ?? "—"}
                   </p>
                 </div>
               </div>

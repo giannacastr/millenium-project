@@ -161,3 +161,25 @@ model RiskBreachLog {
 
   @@index([orderId])
 }
+
+model Holding {
+  id        Int      @id @default(autoincrement())
+  ticker    String
+  shares    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ticker])
+}
+
+model RiskLimit {
+  id                    Int      @id @default(autoincrement())
+  singleNameCapPct      Float    @default(10)
+  sectorCapPct          Float    @default(30)
+  grossExposureCapPct   Float    @default(180)
+  netExposureCapPct     Float    @default(70)
+  buyingPowerUsedCapPct Float    @default(90)
+  maxOrderNotional      Float    @default(5000000)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}

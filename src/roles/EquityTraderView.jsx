@@ -27,6 +27,8 @@ function EquityTraderView({
   setSelectedOrderId,
   preTradeImpact,
   exposure,
+  livePrice,
+  quote,
 }) {
   const myOrders = orders.filter((order) => order.trader === profile.name)
   const activeOrders = myOrders.filter((o) => !['Fully Filled', 'Rejected', 'Cancelled'].includes(o.status))
@@ -37,7 +39,12 @@ function EquityTraderView({
     <div className="trader-layout">
       {/* Top Market Data Bar */}
       <div className="market-bar">
-        <MarketDataPanel ticker={ticket.ticker} tickerMeta={tickerMeta} />
+        <MarketDataPanel
+          ticker={ticket.ticker}
+          tickerMeta={tickerMeta}
+          livePrice={livePrice}
+          quote={quote}
+        />
       </div>
 
       {/* Main Content Grid */}
@@ -57,7 +64,11 @@ function EquityTraderView({
 
         {/* Right: Market Data & Risk Dashboard */}
         <div className="panel right-stack">
-          <OrderLadder ticker={ticket.ticker} currentPrice={tickerMeta.price} orders={activeOrders} />
+          <OrderLadder
+            ticker={ticket.ticker}
+            currentPrice={livePrice || tickerMeta.price}
+            orders={activeOrders}
+          />
           <PortfolioMiniDashboard exposure={exposure} preTradeImpact={preTradeImpact} />
         </div>
       </div>

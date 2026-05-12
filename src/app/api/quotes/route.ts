@@ -15,6 +15,12 @@ export async function GET(req: NextRequest) {
 
   const quote = await fetchMarketQuote(symbol);
   if ("error" in quote) {
+    if (quote.error === "Missing FINNHUB_API_KEY") {
+      return NextResponse.json(
+        { error: "Server missing FINNHUB_API_KEY" },
+        { status: 500 },
+      );
+    }
     return NextResponse.json(
       { error: quote.error },
       { status: quote.error === "Unknown symbol" ? 400 : 502 },

@@ -17,6 +17,10 @@ export default async function Home() {
     redirect("/deactivated");
   }
 
+  if (session.user.isSuper) {
+    redirect("/platform/admin");
+  }
+
   switch (session.user.type) {
     case UserType.EQUITY_TRADER:
       redirect("/trader");

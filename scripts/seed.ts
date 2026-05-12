@@ -87,6 +87,69 @@ async function main() {
 
   console.log("✓ Users:", trader.email, risk.email, broker.email);
 
+  const admin = await prisma.user.upsert({
+    where: { email: "admin@test.com" },
+    update: {
+      name: "Casey Admin",
+      passwordHash: hashedPassword,
+      type: UserType.RISK_OFFICER,
+      enabled: true,
+      pending: false,
+      isSuper: true,
+      userRead: true,
+      userWrite: true,
+      orderRead: true,
+      orderWrite: true,
+      reportRead: true,
+      reportWrite: true,
+    },
+    create: {
+      email: "admin@test.com",
+      name: "Casey Admin",
+      passwordHash: hashedPassword,
+      type: UserType.RISK_OFFICER,
+      enabled: true,
+      pending: false,
+      isSuper: true,
+      userRead: true,
+      userWrite: true,
+      orderRead: true,
+      orderWrite: true,
+      reportRead: true,
+      reportWrite: true,
+    },
+  });
+
+  console.log("✓ Admin:", admin.email);
+
+  // --- Portfolio + limits (new) ---
+  await prisma.holding.deleteMany();
+  await prisma.riskLimit.deleteMany();
+
+  await prisma.holding.createMany({
+    data: [
+      { ticker: "MSFT", shares: 10_000 },
+      { ticker: "AAPL", shares: 8_500 },
+      { ticker: "NVDA", shares: 6_200 },
+      { ticker: "JPM", shares: 12_000 },
+      { ticker: "XOM", shares: 9_800 },
+    ],
+  });
+
+  await prisma.riskLimit.create({
+    data: {
+      singleNameCapPct: 10,
+      sectorCapPct: 30,
+      grossExposureCapPct: 180,
+      netExposureCapPct: 70,
+      buyingPowerUsedCapPct: 90,
+      // Simple initial value; will be editable in admin screen.
+      maxOrderNotional: 5_000_000,
+    },
+  });
+
+  console.log("✓ Seeded initial holdings + risk limits");
+
   const mkTitle = (dir: OrderDirection, ticker: string, qty: number) =>
     `${dir === OrderDirection.BUY ? "Buy" : dir === OrderDirection.SELL ? "Sell" : "Short"} ${ticker} · ${qty.toLocaleString()} shares`;
 
