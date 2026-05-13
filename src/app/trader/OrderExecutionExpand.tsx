@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { OrderStatus } from "@prisma/client";
 import { type OrderForExecution, resolveExecutionFill } from "@/lib/trading/executionFill";
+import IntradayTickerChart from "@/components/IntradayTickerChart";
 
 const PENDING_STATUSES: OrderStatus[] = [
   "SUBMITTED",
@@ -90,6 +91,7 @@ export type ExpandOrder = {
 type Props = {
   order: ExpandOrder;
   onRunTransition: (body: Record<string, unknown>) => void;
+  currentPrice?: number;
 };
 
 function fmtTime(iso: string) {
@@ -128,6 +130,7 @@ function getExecutionSummary(o: ExpandOrder) {
 export default function OrderExecutionExpand({
   order: o,
   onRunTransition,
+  currentPrice,
 }: Props) {
   const fill = useMemo(() => getExecutionSummary(o), [o]);
 
@@ -393,6 +396,17 @@ export default function OrderExecutionExpand({
               </dl>
             </div>
           )}
+
+          <IntradayTickerChart
+            ticker={o.ticker}
+            submittedAt={o.createdAt}
+            fills={o.fills.map((fill) => ({
+              price: fill.price,
+              executedAt: fill.executedAt,
+              quantity: fill.quantity,
+            }))}
+            currentPrice={currentPrice ?? o.averageFillPrice ?? 150}
+          />
         </div>
       )}
 

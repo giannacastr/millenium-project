@@ -26,6 +26,7 @@ import {
 import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
 import PreTradeAllocationEditor from "@/components/PreTradeAllocationEditor";
 import Top5Positions from "@/components/Top5Positions";
+import BuyingPowerGauge from "@/components/BuyingPowerGauge";
 import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
 
@@ -617,6 +618,11 @@ export default function TraderDesk() {
                                 onRunTransition={(body: Record<string, unknown>) =>
                                   runTransition(o.id, body)
                                 }
+                                currentPrice={
+                                  o.ticker === ticket.ticker && liveLastPrice
+                                    ? liveLastPrice
+                                    : undefined
+                                }
                               />
                             </td>
                           </tr>
@@ -643,6 +649,14 @@ export default function TraderDesk() {
             </p>
             {exposureSnapshot ? (
               <>
+                <div className="mb-4 flex justify-center">
+                  <BuyingPowerGauge
+                    usedPct={exposureSnapshot.exposure.buyingPowerUsed}
+                    capPct={exposureSnapshot.limits.buyingPowerUsedCapPct}
+                    title="Buying Power Utilization"
+                    showLabel={true}
+                  />
+                </div>
                 <dl className="mb-3 grid grid-cols-2 gap-2 text-xs">
                   <dt className="text-slate-500">NAV (holdings)</dt>
                   <dd className="text-right font-mono font-medium text-slate-900">
