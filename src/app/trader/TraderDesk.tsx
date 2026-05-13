@@ -80,7 +80,7 @@ type TicketState = {
 function createEmptyTicket(): TicketState {
   return {
     direction: "BUY",
-    ticker: "MSFT",
+    ticker: "",
     quantity: 5000,
     orderType: "MARKET",
     limitPrice: "",
@@ -136,7 +136,7 @@ export default function TraderDesk() {
   const [tickerDetails, setTickerDetails] = useState<
     Record<string, { companyName: string; sector: string; price: number }>
   >({});
-  const [tickerQuery, setTickerQuery] = useState("MSFT");
+  const [tickerQuery, setTickerQuery] = useState("");
   const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false);
   const [exposureSnapshot, setExposureSnapshot] = useState<{
     exposure: ExposureDTO;
@@ -320,7 +320,7 @@ export default function TraderDesk() {
     setTicket(createEmptyTicket());
     setAmendSourceOrder(null);
     setDrawerOpen(true);
-    setTickerQuery("MSFT");
+    setTickerQuery("");
     setTickerDropdownOpen(false);
   }
 
