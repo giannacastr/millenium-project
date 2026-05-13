@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { fetchMarketQuote } from "@/lib/trading/marketQuote";
 import { splitQuantityAcrossAllocations } from "@/lib/trading/allocation";
+import { detectAndLogWashSale } from "@/lib/trading/washSale";
 import { OrderDirection, OrderStatus } from "@prisma/client";
 
 const FILL_COUNT = 4;
@@ -190,6 +191,15 @@ async function advanceOrderFills(order: ActiveFillOrder) {
             nextStatus === OrderStatus.FULLY_FILLED ? executedAt : null,
         },
       });
+      // after committing the fill and order updates, run wash-sale detection
+      // (run outside the transaction to keep DB locks minimal)
+      (async () => {
+        try {
+          await detectAndLogWashSale(createdFill.id);
+        } catch (e) {
+          console.error("[wash-sale] detection failed", e);
+        }
+      })();
 
       await tx.orderActivity.create({
         data: {

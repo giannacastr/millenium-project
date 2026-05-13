@@ -31,6 +31,11 @@ export default function BrokerDesk() {
     const res = await fetch("/api/orders");
     if (res.ok) {
       const data = await res.json();
+      console.log("[BrokerDesk] orders response:", data);
+      console.log("[BrokerDesk] total orders:", data.orders?.length ?? 0);
+      if (data.orders?.length) {
+        console.log("[BrokerDesk] statuses:", data.orders.map((o: ApiOrder) => ({ id: o.id, ticket: o.ticketKey, status: o.status })));
+      }
       setOrders(data.orders ?? []);
     }
   }, []);

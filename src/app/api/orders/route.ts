@@ -55,6 +55,7 @@ export async function GET() {
         include: orderInclude,
         orderBy: { createdAt: "desc" },
       });
+      console.log(`[api/orders] EQUITY_TRADER ${uid}: returning ${rows.length} orders`);
       return NextResponse.json({ orders: rows.map(serializeOrder) });
     }
 
@@ -63,6 +64,8 @@ export async function GET() {
         include: orderInclude,
         orderBy: { createdAt: "desc" },
       });
+      console.log(`[api/orders] ${type} ${uid}: returning ${rows.length} total orders`);
+      console.log(`[api/orders] order statuses:`, rows.map(o => ({ id: o.id, ticketKey: o.ticketKey, status: o.status })));
       return NextResponse.json({ orders: rows.map(serializeOrder) });
     }
 
