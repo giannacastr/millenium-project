@@ -64,6 +64,59 @@ type ApiOrder = {
   trader: { name: string };
 };
 
+type TicketState = {
+  direction: "BUY" | "SELL" | "SHORT";
+  ticker: string;
+  quantity: number;
+  orderType: "MARKET" | "LIMIT" | "VWAP";
+  limitPrice: string;
+  allocations: AllocationDraft[];
+  strategy: string;
+  notes: string;
+};
+
+function createEmptyTicket(): TicketState {
+  return {
+    direction: "BUY",
+    ticker: "MSFT",
+    quantity: 5000,
+    orderType: "MARKET",
+    limitPrice: "",
+    allocations: [createAllocationDraft(ACCOUNT_OPTIONS[0], "100")],
+    strategy: STRATEGY_OPTIONS[0],
+    notes: "",
+  };
+}
+
+function createTicketFromOrder(order: ApiOrder): TicketState {
+  return {
+    direction: order.direction as TicketState["direction"],
+    ticker: order.ticker,
+    quantity: order.quantity,
+    orderType: order.orderType as TicketState["orderType"],
+    limitPrice: order.limitPrice ?? "",
+    allocations:
+      order.allocationInstructions.length > 0
+        ? order.allocationInstructions.map((allocation) =>
+            createAllocationDraft(allocation.account, String(allocation.weightPct)),
+          )
+        : [createAllocationDraft(order.account, "100")],
+    strategy: order.strategy,
+    notes: order.notes ?? "",
+  };
+}
+
+function isCancelableStatus(status: OrderStatus): boolean {
+  return [
+    "DRAFT",
+    "SUBMITTED",
+    "IN_REVIEW",
+    "RISK_APPROVED",
+    "ACKNOWLEDGED",
+    "PARTIALLY_FILLED",
+  ].includes(status);
+}
+
 export default function TraderDesk() {
   const { data: session } = useSession();
   const [orders, setOrders] = useState<ApiOrder[]>([]);
@@ -71,6 +124,8 @@ export default function TraderDesk() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [bucket, setBucket] = useState<BlotterFilter>("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [amendSourceOrder, setAmendSourceOrder] = useState<ApiOrder | null>(null);
+  const [cancelTargetOrder, setCancelTargetOrder] = useState<ApiOrder | null>(null);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
   const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
   const [tickerOptions, setTickerOptions] = useState<string[]>(
@@ -86,16 +141,7 @@ export default function TraderDesk() {
     limits: RiskLimitsDTO;
   } | null>(null);
 
-  const [ticket, setTicket] = useState({
-    direction: "BUY" as "BUY" | "SELL" | "SHORT",
-    ticker: "MSFT",
-    quantity: 5000,
-    orderType: "MARKET" as "MARKET" | "LIMIT" | "VWAP",
-    limitPrice: "" as string,
-    allocations: [createAllocationDraft(ACCOUNT_OPTIONS[0], "100")],
-    strategy: STRATEGY_OPTIONS[0],
-    notes: "",
-  });
+  const [ticket, setTicket] = useState<TicketState>(() => createEmptyTicket());
 
   const normalizedAllocations = useMemo(
     () => normalizeAllocationDrafts(ticket.allocations),
@@ -263,31 +309,77 @@ export default function TraderDesk() {
     return c;
   }, [orders]);
 
+  function openNewTicket() {
+    setTicket(createEmptyTicket());
+    setAmendSourceOrder(null);
+    setDrawerOpen(true);
+    setTickerQuery("MSFT");
+    setTickerDropdownOpen(false);
+  }
+
+  function openAmendTicket(order: ApiOrder) {
+    setTicket(createTicketFromOrder(order));
+    setAmendSourceOrder(order);
+    setDrawerOpen(true);
+    setSelectedId(order.id);
+    setTickerQuery(order.ticker);
+    setTickerDropdownOpen(false);
+  }
+
   async function submitTicket(mode: "draft" | "submit") {
+    const payload = {
+      direction: ticket.direction,
+      ticker: ticket.ticker,
+      quantity: ticket.quantity,
+      orderType: ticket.orderType,
+      limitPrice:
+        ticket.orderType === "LIMIT" ? Number(ticket.limitPrice) || null : null,
+      account: allocationSummary,
+      allocations: normalizedAllocations,
+      strategy: ticket.strategy,
+      notes: ticket.notes,
+      mode,
+    };
+
+    if (amendSourceOrder?.status === "DRAFT") {
+      const patchRes = await fetch(`/api/orders/${amendSourceOrder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!patchRes.ok) return false;
+
+      if (mode === "submit") {
+        const submitRes = await fetch(`/api/orders/${amendSourceOrder.id}/transition`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "submit_draft" }),
+        });
+        if (!submitRes.ok) return false;
+      }
+
+      setDrawerOpen(false);
+      setTickerDropdownOpen(false);
+      setAmendSourceOrder(null);
+      await load();
+      setSelectedId(amendSourceOrder.id);
+      return true;
+    }
+
     const res = await fetch("/api/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        direction: ticket.direction,
-        ticker: ticket.ticker,
-        quantity: ticket.quantity,
-        orderType: ticket.orderType,
-        limitPrice:
-          ticket.orderType === "LIMIT" ? Number(ticket.limitPrice) || null : null,
-        account: allocationSummary,
-        allocations: normalizedAllocations,
-        strategy: ticket.strategy,
-        notes: ticket.notes,
-        mode,
-      }),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       const data = await res.json();
       setDrawerOpen(false);
       setTickerDropdownOpen(false);
+      setAmendSourceOrder(null);
       await load();
       setSelectedId(data.order?.id ?? null);
     }
+    return res.ok;
   }
 
   async function runTransition(
@@ -301,6 +393,16 @@ export default function TraderDesk() {
     });
     if (res.ok) {
       await load();
+      return true;
+    }
+    return false;
+  }
+
+  async function confirmCancel() {
+    if (!cancelTargetOrder) return;
+    const ok = await runTransition(cancelTargetOrder.id, { action: "cancel" });
+    if (ok) {
+      setCancelTargetOrder(null);
     }
   }
 
@@ -335,7 +437,7 @@ export default function TraderDesk() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setDrawerOpen(true)}
+              onClick={openNewTicket}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               New order ticket
@@ -393,18 +495,19 @@ export default function TraderDesk() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Avg Px</th>
                   <th className="px-4 py-3">Time</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       No orders in this filter.
                     </td>
                   </tr>
@@ -465,6 +568,45 @@ export default function TraderDesk() {
                               hour: "2-digit",
                               minute: "2-digit",
                             })}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (isCancelableStatus(o.status)) {
+                                    setCancelTargetOrder(o);
+                                  }
+                                }}
+                                disabled={!isCancelableStatus(o.status)}
+                                title={
+                                  isCancelableStatus(o.status)
+                                    ? "Cancel order"
+                                    : "Order cannot be cancelled in its current state"
+                                }
+                                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm transition ${
+                                  isCancelableStatus(o.status)
+                                    ? "border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                                    : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                }`}
+                                aria-label={`Cancel ${o.ticketKey}`}
+                              >
+                                ×
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAmendTicket(o);
+                                }}
+                                title="Amend order"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                                aria-label={`Amend ${o.ticketKey}`}
+                              >
+                                ✎
+                              </button>
+                            </div>
                           </td>
                         </tr>
                         {expanded && (
@@ -587,10 +729,23 @@ export default function TraderDesk() {
         <div className="fixed inset-0 z-40 flex justify-end bg-black/40">
           <div className="h-full w-full max-w-lg overflow-y-auto bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <h2 className="text-lg font-semibold">New equity ticket</h2>
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {amendSourceOrder ? "Amend equity ticket" : "New equity ticket"}
+                </h2>
+                {amendSourceOrder && amendSourceOrder.status !== "DRAFT" && (
+                  <p className="text-xs text-amber-700">
+                    Amending {amendSourceOrder.ticketKey} — changes will require re-submission.
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={() => setDrawerOpen(false)}
+                onClick={() => {
+                  setDrawerOpen(false);
+                  setAmendSourceOrder(null);
+                  setTickerDropdownOpen(false);
+                }}
                 className="text-slate-500 hover:text-slate-800"
               >
                 ✕
@@ -806,9 +961,57 @@ export default function TraderDesk() {
                   onClick={() => submitTicket("submit")}
                   className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white"
                 >
-                  Submit for review
+                  {amendSourceOrder?.status === "DRAFT" ? "Submit draft" : "Submit for review"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelTargetOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                  Confirm cancel request
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                  Cancel {cancelTargetOrder.ticketKey}?
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm leading-6 text-slate-600">
+              This order is at the broker. Cancelling will send a cancel request. Any filled shares cannot be recalled.
+            </p>
+            {cancelTargetOrder.filledQuantity > 0 && (
+              <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Filled so far: {cancelTargetOrder.filledQuantity.toLocaleString()} shares.
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+              >
+                Keep order
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCancel()}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+              >
+                Send cancel request
+              </button>
             </div>
           </div>
         </div>

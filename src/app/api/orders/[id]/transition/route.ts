@@ -36,6 +36,9 @@ const bodySchema = z.discriminatedUnion("action", [
     reason: z.string().optional(),
   }),
   z.object({
+    action: z.literal("lock_allocations"),
+  }),
+  z.object({
     action: z.literal("simulate_partial_fill"),
     filledQty: z.number().int().positive(),
     price: z.number(),

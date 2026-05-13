@@ -36,11 +36,12 @@ type ActiveFillOrder = {
 };
 
 function isFillActive(status: OrderStatus): boolean {
-  return [
+  const activeStatuses: OrderStatus[] = [
     OrderStatus.RISK_APPROVED,
     OrderStatus.ACKNOWLEDGED,
     OrderStatus.PARTIALLY_FILLED,
-  ].includes(status);
+  ];
+  return activeStatuses.includes(status);
 }
 
 function splitQuantityIntoChunks(totalQuantity: number): number[] {
@@ -147,6 +148,15 @@ async function advanceOrderFills(order: ActiveFillOrder) {
         ? OrderStatus.FULLY_FILLED
         : OrderStatus.PARTIALLY_FILLED;
 
+    const fillAllocations = splitQuantityAcrossAllocations(fillQty, order.allocationInstructions.length > 0
+      ? order.allocationInstructions
+      : [{ id: 0, sequence: 1, account: order.ticker, weightPct: 100 }]).map((split) => ({
+      fillId: -sequence,
+      instructionId: split.id,
+      shares: split.shares,
+      notional: roundToCents(split.shares * fillPrice),
+    }));
+
     await prisma.$transaction(async (tx) => {
       const createdFill = await tx.orderFill.create({
         data: {
@@ -158,18 +168,15 @@ async function advanceOrderFills(order: ActiveFillOrder) {
         },
       });
 
-      const instructions =
-        order.allocationInstructions.length > 0
-          ? order.allocationInstructions
-          : [{ id: 0, sequence: 1, account: order.ticker, weightPct: 100 }];
-      const splits = splitQuantityAcrossAllocations(fillQty, instructions).map((split) => ({
-        fillId: createdFill.id,
-        instructionId: split.id,
-        shares: split.shares,
-        notional: roundToCents(split.shares * fillPrice),
-      }));
-      if (splits.length > 0) {
-        await tx.orderFillAllocation.createMany({ data: splits });
+      if (fillAllocations.length > 0) {
+        await tx.orderFillAllocation.createMany({
+          data: fillAllocations.map((allocation) => ({
+            fillId: createdFill.id,
+            instructionId: allocation.instructionId,
+            shares: allocation.shares,
+            notional: allocation.notional,
+          })),
+        });
       }
 
       await tx.order.update({
@@ -203,7 +210,7 @@ async function advanceOrderFills(order: ActiveFillOrder) {
       quantity: fillQty,
       price: fillPrice,
       executedAt,
-      allocations: splits.map((split, index) => ({
+      allocations: fillAllocations.map((split, index) => ({
         id: index + 1,
         fillId: -sequence,
         instructionId: split.instructionId,
