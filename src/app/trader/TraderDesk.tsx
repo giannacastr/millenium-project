@@ -25,6 +25,7 @@ import {
 } from "@/lib/trading/allocation";
 import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
 import PreTradeAllocationEditor from "@/components/PreTradeAllocationEditor";
+import IntradayTickerChart from "@/components/IntradayTickerChart";
 import Top5Positions from "@/components/Top5Positions";
 import BuyingPowerGauge from "@/components/BuyingPowerGauge";
 import DraftTickerInsight from "./DraftTickerInsight";
@@ -288,6 +289,11 @@ export default function TraderDesk() {
     }
     return rows;
   }, [orders, bucket, sort]);
+
+  const selectedOrder = useMemo(
+    () => orders.find((order) => order.id === selectedId) ?? null,
+    [orders, selectedId],
+  );
 
   const counts = useMemo(() => {
     const c = {
@@ -637,6 +643,33 @@ export default function TraderDesk() {
         </div>
 
         <aside className="space-y-4">
+          {selectedOrder && (
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="mb-3 text-sm font-semibold text-slate-900">
+                Selected order chart
+              </h3>
+              <p className="mb-3 text-xs text-slate-500">
+                {selectedOrder.ticketKey} · {selectedOrder.ticker} · click a different row to switch.
+              </p>
+              <IntradayTickerChart
+                ticker={selectedOrder.ticker}
+                submittedAt={selectedOrder.createdAt}
+                fills={selectedOrder.fills.map((fill) => ({
+                  price: fill.price,
+                  executedAt: fill.executedAt,
+                  quantity: fill.quantity,
+                }))}
+                currentPrice={
+                  liveLastPrice ??
+                  selectedOrder.averageFillPrice ??
+                  tickerDetails[selectedOrder.ticker]?.price ??
+                  TICKER_META[selectedOrder.ticker]?.price ??
+                  150
+                }
+              />
+            </section>
+          )}
+
           <Top5Positions exposure={exposureSnapshot?.exposure ?? null} />
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

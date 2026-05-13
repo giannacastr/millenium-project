@@ -397,16 +397,21 @@ export default function OrderExecutionExpand({
             </div>
           )}
 
-          <IntradayTickerChart
-            ticker={o.ticker}
-            submittedAt={o.createdAt}
-            fills={o.fills.map((fill) => ({
-              price: fill.price,
-              executedAt: fill.executedAt,
-              quantity: fill.quantity,
-            }))}
-            currentPrice={currentPrice ?? o.averageFillPrice ?? 150}
-          />
+          <div className="mt-4">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Price chart
+            </h4>
+            <IntradayTickerChart
+              ticker={o.ticker}
+              submittedAt={o.createdAt}
+              fills={o.fills.map((fill) => ({
+                price: fill.price,
+                executedAt: fill.executedAt,
+                quantity: fill.quantity,
+              }))}
+              currentPrice={currentPrice ?? o.averageFillPrice ?? 150}
+            />
+          </div>
         </div>
       )}
 
