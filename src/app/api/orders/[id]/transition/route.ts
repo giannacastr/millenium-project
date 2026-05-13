@@ -100,15 +100,21 @@ export async function POST(
       if (order.status !== OrderStatus.DRAFT) {
         return NextResponse.json({ error: "Not a draft" }, { status: 400 });
       }
-      const snapshot = await computeExposureSnapshot({
-        extraSymbols: [order.ticker],
-      });
+      const [snapshot, restrictedStocks] = await Promise.all([
+        computeExposureSnapshot({
+          extraSymbols: [order.ticker],
+        }),
+        prisma.restrictedStock.findMany({
+          select: { ticker: true },
+        }),
+      ]);
       const impact = computePreTradeImpact({
         ticker: order.ticker,
         quantity: order.quantity,
         limitPrice: order.limitPrice ? Number(order.limitPrice) : undefined,
         direction: order.direction,
         portfolio: snapshot,
+        restrictedStocks: restrictedStocks.map((rs) => rs.ticker),
       });
 
       await prisma.$transaction(async (tx) => {

@@ -14,14 +14,16 @@ export async function GET() {
   }
   if (!session.user.isSuper) return forbidden();
 
-  const [holdings, limit] = await Promise.all([
+  const [holdings, limit, restrictedStocks] = await Promise.all([
     prisma.holding.findMany({ orderBy: { ticker: "asc" } }),
     prisma.riskLimit.findFirst({ orderBy: { id: "desc" } }),
+    prisma.restrictedStock.findMany({ orderBy: { ticker: "asc" } }),
   ]);
 
   return NextResponse.json({
     holdings,
     limits: limit,
+    restrictedStocks: restrictedStocks.map((rs) => ({ ticker: rs.ticker, reason: rs.reason })),
   });
 }
 
@@ -46,6 +48,20 @@ const upsertSchema = z.object({
     buyingPowerUsedCapPct: z.number().positive(),
     maxOrderNotional: z.number().positive(),
   }),
+  restrictedStocks: z
+    .array(
+      z.object({
+        ticker: z
+          .string()
+          .trim()
+          .toUpperCase()
+          .min(1)
+          .max(16)
+          .regex(/^[A-Z][A-Z0-9.\\-]*$/),
+        reason: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -85,6 +101,16 @@ export async function POST(req: NextRequest) {
           buyingPowerUsedCapPct: body.limits.buyingPowerUsedCapPct,
           maxOrderNotional: body.limits.maxOrderNotional,
         },
+      });
+    }
+
+    if (body.restrictedStocks) {
+      await tx.restrictedStock.deleteMany();
+      await tx.restrictedStock.createMany({
+        data: body.restrictedStocks.map((rs) => ({
+          ticker: rs.ticker,
+          reason: rs.reason ?? null,
+        })),
       });
     }
   });

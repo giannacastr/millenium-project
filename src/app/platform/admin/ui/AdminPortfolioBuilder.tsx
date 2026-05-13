@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
 
 type HoldingRow = { ticker: string; shares: number };
+type RestrictedStockRow = { ticker: string; reason?: string };
 type LimitsRow = {
   singleNameCapPct: number;
   sectorCapPct: number;
@@ -21,6 +22,7 @@ const DEFAULT_LIMITS: LimitsRow = {
 export default function AdminPortfolioBuilder() {
   const [holdings, setHoldings] = useState<HoldingRow[]>([]);
   const [limits, setLimits] = useState<LimitsRow>(DEFAULT_LIMITS);
+  const [restrictedStocks, setRestrictedStocks] = useState<RestrictedStockRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +45,7 @@ export default function AdminPortfolioBuilder() {
         maxOrderNotional: data.limits.maxOrderNotional ?? 5_000_000,
       });
     }
+    setRestrictedStocks((data.restrictedStocks ?? []).map((rs: any) => ({ ticker: rs.ticker, reason: rs.reason })));
   }, []);
 
   useEffect(() => {
@@ -64,6 +67,9 @@ export default function AdminPortfolioBuilder() {
             .map((h) => ({ ticker: h.ticker.trim().toUpperCase(), shares: Number(h.shares) }))
             .filter((h) => h.ticker && Number.isFinite(h.shares)),
           limits,
+          restrictedStocks: restrictedStocks
+            .map((rs) => ({ ticker: rs.ticker.trim().toUpperCase(), reason: rs.reason ?? undefined }))
+            .filter((rs) => rs.ticker),
         }),
       });
       const data = await res.json();
@@ -225,6 +231,82 @@ export default function AdminPortfolioBuilder() {
                 />
               </label>
             ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-900">Restricted list</h2>
+            <p className="mt-0.5 text-sm text-slate-600">
+              Securities the fund is legally prohibited from trading. Orders for these stocks will be flagged in pre-trade checks.
+            </p>
+          </div>
+          <div className="overflow-x-auto p-4">
+            <table className="w-full min-w-[520px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Ticker</th>
+                  <th className="px-3 py-2">Reason</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {restrictedStocks.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
+                      No restricted stocks yet.
+                    </td>
+                  </tr>
+                ) : (
+                  restrictedStocks.map((rs, idx) => (
+                    <tr key={`${rs.ticker}-${idx}`} className="border-t border-slate-100">
+                      <td className="px-3 py-2">
+                        <input
+                          value={rs.ticker}
+                          onChange={(e) =>
+                            setRestrictedStocks((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, ticker: e.target.value } : r)),
+                            )
+                          }
+                          className="w-28 rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={rs.reason ?? ""}
+                          onChange={(e) =>
+                            setRestrictedStocks((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, reason: e.target.value } : r)),
+                            )
+                          }
+                          placeholder="e.g., MNPI"
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          className="rounded-lg bg-slate-100 px-3 py-1 text-xs text-slate-700 hover:bg-slate-200"
+                          onClick={() => setRestrictedStocks((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            <div className="mt-3 flex justify-between">
+              <button
+                type="button"
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white"
+                onClick={() => setRestrictedStocks((prev) => [...prev, { ticker: "", reason: "" }])}
+              >
+                Add row
+              </button>
+            </div>
           </div>
         </section>
 

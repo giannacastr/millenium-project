@@ -116,15 +116,21 @@ export async function POST(req: NextRequest) {
   const status =
     body.mode === "draft" ? OrderStatus.DRAFT : OrderStatus.SUBMITTED;
 
-  const snapshot = await computeExposureSnapshot({
-    extraSymbols: [body.ticker.toUpperCase()],
-  });
+  const [snapshot, restrictedStocks] = await Promise.all([
+    computeExposureSnapshot({
+      extraSymbols: [body.ticker.toUpperCase()],
+    }),
+    prisma.restrictedStock.findMany({
+      select: { ticker: true },
+    }),
+  ]);
   const impact = computePreTradeImpact({
     ticker: body.ticker.toUpperCase(),
     quantity: body.quantity,
     limitPrice: body.limitPrice ?? undefined,
     direction,
     portfolio: snapshot,
+    restrictedStocks: restrictedStocks.map((rs) => rs.ticker),
   });
 
   try {
