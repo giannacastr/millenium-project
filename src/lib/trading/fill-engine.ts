@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { fetchMarketQuote } from "@/lib/trading/marketQuote";
+import { splitQuantityAcrossAllocations } from "@/lib/trading/allocation";
 import { OrderDirection, OrderStatus } from "@prisma/client";
 
 const FILL_COUNT = 4;
@@ -17,7 +18,21 @@ type ActiveFillOrder = {
   filledQuantity: number;
   remainingQuantity: number;
   averageFillPrice: number | null;
-  fills: { id: number; sequence: number; quantity: number; price: number; executedAt: Date }[];
+  allocationInstructions: { id: number; sequence: number; account: string; weightPct: number }[];
+  fills: {
+    id: number;
+    sequence: number;
+    quantity: number;
+    price: number;
+    executedAt: Date;
+    allocations: {
+      id: number;
+      fillId: number;
+      instructionId: number;
+      shares: number;
+      notional: number;
+    }[];
+  }[];
 };
 
 function isFillActive(status: OrderStatus): boolean {
@@ -133,7 +148,7 @@ async function advanceOrderFills(order: ActiveFillOrder) {
         : OrderStatus.PARTIALLY_FILLED;
 
     await prisma.$transaction(async (tx) => {
-      await tx.orderFill.create({
+      const createdFill = await tx.orderFill.create({
         data: {
           orderId: order.id,
           sequence,
@@ -142,6 +157,20 @@ async function advanceOrderFills(order: ActiveFillOrder) {
           executedAt,
         },
       });
+
+      const instructions =
+        order.allocationInstructions.length > 0
+          ? order.allocationInstructions
+          : [{ id: 0, sequence: 1, account: order.ticker, weightPct: 100 }];
+      const splits = splitQuantityAcrossAllocations(fillQty, instructions).map((split) => ({
+        fillId: createdFill.id,
+        instructionId: split.id,
+        shares: split.shares,
+        notional: roundToCents(split.shares * fillPrice),
+      }));
+      if (splits.length > 0) {
+        await tx.orderFillAllocation.createMany({ data: splits });
+      }
 
       await tx.order.update({
         where: { id: order.id },
@@ -174,6 +203,13 @@ async function advanceOrderFills(order: ActiveFillOrder) {
       quantity: fillQty,
       price: fillPrice,
       executedAt,
+      allocations: splits.map((split, index) => ({
+        id: index + 1,
+        fillId: -sequence,
+        instructionId: split.instructionId,
+        shares: split.shares,
+        notional: split.notional,
+      })),
     });
 
     if (nextStatus === OrderStatus.FULLY_FILLED) break;
@@ -203,6 +239,15 @@ export async function processSimulatedFillEngine() {
       filledQuantity: true,
       remainingQuantity: true,
       averageFillPrice: true,
+      allocationInstructions: {
+        orderBy: { sequence: "asc" },
+        select: {
+          id: true,
+          sequence: true,
+          account: true,
+          weightPct: true,
+        },
+      },
       fills: {
         orderBy: { sequence: "asc" },
         select: {
@@ -211,6 +256,15 @@ export async function processSimulatedFillEngine() {
           quantity: true,
           price: true,
           executedAt: true,
+          allocations: {
+            select: {
+              id: true,
+              fillId: true,
+              instructionId: true,
+              shares: true,
+              notional: true,
+            },
+          },
         },
       },
     },

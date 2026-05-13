@@ -16,7 +16,15 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import {
+  createAllocationDraft,
+  formatAllocationSummary,
+  hasValidAllocationTotal,
+  normalizeAllocationDrafts,
+  type AllocationDraft,
+} from "@/lib/trading/allocation";
 import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
+import PreTradeAllocationEditor from "@/components/PreTradeAllocationEditor";
 import Top5Positions from "@/components/Top5Positions";
 import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
@@ -42,7 +50,16 @@ type ApiOrder = {
   arrivalPrice: number | null;
   fillStartedAt: string | null;
   fillCompletedAt: string | null;
-  fills: { id: number; sequence: number; quantity: number; price: number; executedAt: string }[];
+  allocationLockedAt: string | null;
+  allocationInstructions: { id: number; sequence: number; account: string; weightPct: number }[];
+  fills: {
+    id: number;
+    sequence: number;
+    quantity: number;
+    price: number;
+    executedAt: string;
+    allocations: { id: number; fillId: number; instructionId: number; shares: number; notional: number }[];
+  }[];
   activities: { id: number; message: string; actorName: string | null; createdAt: string }[];
   trader: { name: string };
 };
@@ -75,10 +92,26 @@ export default function TraderDesk() {
     quantity: 5000,
     orderType: "MARKET" as "MARKET" | "LIMIT" | "VWAP",
     limitPrice: "" as string,
-    account: ACCOUNT_OPTIONS[0],
+    allocations: [createAllocationDraft(ACCOUNT_OPTIONS[0], "100")],
     strategy: STRATEGY_OPTIONS[0],
     notes: "",
   });
+
+  const normalizedAllocations = useMemo(
+    () => normalizeAllocationDrafts(ticket.allocations),
+    [ticket.allocations],
+  );
+  const allocationSummary = useMemo(
+    () =>
+      normalizedAllocations.length > 0
+        ? formatAllocationSummary(normalizedAllocations)
+        : ACCOUNT_OPTIONS[0],
+    [normalizedAllocations],
+  );
+  const allocationTotalOk = useMemo(
+    () => hasValidAllocationTotal(normalizedAllocations),
+    [normalizedAllocations],
+  );
 
   const load = useCallback(async () => {
     const res = await fetch("/api/orders", { cache: "no-store" });
@@ -218,16 +251,13 @@ export default function TraderDesk() {
       rejected: 0,
     };
     for (const o of orders) {
-      if (o.status === "DRAFT") c.draft++;
-      if (o.status === "SUBMITTED") c.submitted++;
-      if (o.status === "IN_REVIEW") c.inReview++;
-      if (o.status === "PARTIALLY_FILLED" || o.status === "FULLY_FILLED")
+      const status = o.status as string;
+      if (status === "DRAFT") c.draft++;
+      if (status === "SUBMITTED") c.submitted++;
+      if (status === "IN_REVIEW") c.inReview++;
+      if (status === "PARTIALLY_FILLED" || status === "FULLY_FILLED")
         c.filled++;
-      if (
-        o.status === "REJECTED" ||
-        o.status === "CANCELLED" ||
-        o.status === "CANCELLED_PARTIAL"
-      )
+      if (status === "REJECTED" || status === "CANCELLED" || status === "CANCELLED_PARTIAL")
         c.rejected++;
     }
     return c;
@@ -244,7 +274,8 @@ export default function TraderDesk() {
         orderType: ticket.orderType,
         limitPrice:
           ticket.orderType === "LIMIT" ? Number(ticket.limitPrice) || null : null,
-        account: ticket.account,
+        account: allocationSummary,
+        allocations: normalizedAllocations,
         strategy: ticket.strategy,
         notes: ticket.notes,
         mode,
@@ -441,7 +472,7 @@ export default function TraderDesk() {
                             <td colSpan={9} className="p-0 align-top">
                               <OrderExecutionExpand
                                 order={o}
-                                onRunTransition={(body) =>
+                                onRunTransition={(body: Record<string, unknown>) =>
                                   runTransition(o.id, body)
                                 }
                               />
@@ -693,22 +724,13 @@ export default function TraderDesk() {
                   />
                 </label>
               )}
-              <label className="block text-sm">
-                <span className="text-slate-600">Account</span>
-                <select
-                  value={ticket.account}
-                  onChange={(e) =>
-                    setTicket((t) => ({ ...t, account: e.target.value }))
-                  }
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                >
-                  {ACCOUNT_OPTIONS.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <PreTradeAllocationEditor
+                value={ticket.allocations}
+                onChange={(allocations) =>
+                  setTicket((t) => ({ ...t, allocations }))
+                }
+                availableAccounts={ACCOUNT_OPTIONS}
+              />
               <label className="block text-sm">
                 <span className="text-slate-600">Strategy</span>
                 <select

@@ -77,7 +77,11 @@ export async function POST(
     include: {
       activities: { orderBy: { createdAt: "asc" } },
       trader: true,
-      fills: { orderBy: { sequence: "asc" } },
+      allocationInstructions: { orderBy: { sequence: "asc" } },
+      fills: {
+        orderBy: { sequence: "asc" },
+        include: { allocations: true },
+      },
     },
   });
 
@@ -291,6 +295,29 @@ export async function POST(
           },
         });
       });
+    } else if (body.action === "lock_allocations") {
+      if (userType !== UserType.EQUITY_TRADER || order.traderId !== uid) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (order.status !== OrderStatus.FULLY_FILLED) {
+        return NextResponse.json({ error: "Invalid state" }, { status: 400 });
+      }
+      if (order.allocationInstructions.length === 0) {
+        return NextResponse.json({ error: "No allocations to lock" }, { status: 400 });
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { allocationLockedAt: new Date() },
+        });
+        await tx.orderActivity.create({
+          data: {
+            orderId,
+            message: `Allocations confirmed and locked by ${actorName}`,
+            actorName,
+          },
+        });
+      });
     } else if (body.action === "simulate_partial_fill") {
       if (userType !== UserType.EQUITY_TRADER || order.traderId !== uid) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -312,6 +339,42 @@ export async function POST(
             ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
               nextFilled
             : body.price;
+        const createdFill = await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
+        });
+        const instructions =
+          order.allocationInstructions.length > 0
+            ? order.allocationInstructions
+            : [{ id: 0, sequence: 1, account: order.account, weightPct: 100 }];
+        const splits = instructions.map((instruction) => ({
+          instructionId: instruction.id,
+          shares: Math.floor((fillQty * instruction.weightPct) / 100),
+        }));
+        let remainingShares = fillQty - splits.reduce((sum, split) => sum + split.shares, 0);
+        const ranked = [...instructions].sort((a, b) => b.weightPct - a.weightPct || a.sequence - b.sequence);
+        for (const instruction of ranked) {
+          if (remainingShares <= 0) break;
+          const split = splits.find((candidate) => candidate.instructionId === instruction.id);
+          if (!split) continue;
+          split.shares += 1;
+          remainingShares -= 1;
+        }
+        await tx.orderFillAllocation.createMany({
+          data: splits
+            .filter((split) => split.shares > 0)
+            .map((split) => ({
+              fillId: createdFill.id,
+              instructionId: split.instructionId,
+              shares: split.shares,
+              notional: split.shares * body.price,
+            })),
+        });
         await tx.order.update({
           where: { id: orderId },
           data: {
@@ -319,15 +382,6 @@ export async function POST(
             filledQuantity: nextFilled,
             remainingQuantity: Math.max(0, order.quantity - nextFilled),
             averageFillPrice: avg,
-          },
-        });
-        await tx.orderFill.create({
-          data: {
-            orderId,
-            sequence: order.fills.length + 1,
-            quantity: fillQty,
-            price: body.price,
-            executedAt: new Date(),
           },
         });
         await tx.orderActivity.create({
@@ -350,6 +404,42 @@ export async function POST(
             ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
               nextFilled
             : body.price;
+        const createdFill = await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
+        });
+        const instructions =
+          order.allocationInstructions.length > 0
+            ? order.allocationInstructions
+            : [{ id: 0, sequence: 1, account: order.account, weightPct: 100 }];
+        const splits = instructions.map((instruction) => ({
+          instructionId: instruction.id,
+          shares: Math.floor((fillQty * instruction.weightPct) / 100),
+        }));
+        let remainingShares = fillQty - splits.reduce((sum, split) => sum + split.shares, 0);
+        const ranked = [...instructions].sort((a, b) => b.weightPct - a.weightPct || a.sequence - b.sequence);
+        for (const instruction of ranked) {
+          if (remainingShares <= 0) break;
+          const split = splits.find((candidate) => candidate.instructionId === instruction.id);
+          if (!split) continue;
+          split.shares += 1;
+          remainingShares -= 1;
+        }
+        await tx.orderFillAllocation.createMany({
+          data: splits
+            .filter((split) => split.shares > 0)
+            .map((split) => ({
+              fillId: createdFill.id,
+              instructionId: split.instructionId,
+              shares: split.shares,
+              notional: split.shares * body.price,
+            })),
+        });
         await tx.order.update({
           where: { id: orderId },
           data: {
@@ -358,15 +448,6 @@ export async function POST(
             remainingQuantity: 0,
             averageFillPrice: avg,
             fillCompletedAt: new Date(),
-          },
-        });
-        await tx.orderFill.create({
-          data: {
-            orderId,
-            sequence: order.fills.length + 1,
-            quantity: fillQty,
-            price: body.price,
-            executedAt: new Date(),
           },
         });
         await tx.orderActivity.create({
@@ -386,7 +467,10 @@ export async function POST(
         trader: { select: { id: true, name: true, email: true } },
         reviewer: { select: { id: true, name: true } },
         breachLogs: { orderBy: { createdAt: "desc" } },
-        fills: { orderBy: { sequence: "asc" } },
+        fills: {
+          orderBy: { sequence: "asc" },
+          include: { allocations: true },
+        },
       },
     });
 

@@ -69,7 +69,16 @@ export type ExpandOrder = {
   arrivalPrice: number | null;
   fillStartedAt: string | null;
   fillCompletedAt: string | null;
-  fills: { id: number; sequence: number; quantity: number; price: number; executedAt: string }[];
+  allocationLockedAt: string | null;
+  allocationInstructions: { id: number; sequence: number; account: string; weightPct: number }[];
+  fills: {
+    id: number;
+    sequence: number;
+    quantity: number;
+    price: number;
+    executedAt: string;
+    allocations: { id: number; fillId: number; instructionId: number; shares: number; notional: number }[];
+  }[];
   activities: {
     id: number;
     message: string;
@@ -207,6 +216,20 @@ export default function OrderExecutionExpand({
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
+        {o.status === "FULLY_FILLED" && !o.allocationLockedAt && o.allocationInstructions.length > 0 && (
+          <button
+            type="button"
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white"
+            onClick={() => onRunTransition({ action: "lock_allocations" })}
+          >
+            Allocate
+          </button>
+        )}
+        {o.status === "FULLY_FILLED" && o.allocationLockedAt && (
+          <span className="rounded-lg bg-emerald-100 px-3 py-2 text-sm text-emerald-800">
+            Allocations locked
+          </span>
+        )}
         {o.status === "DRAFT" && (
           <button
             type="button"
@@ -314,6 +337,41 @@ export default function OrderExecutionExpand({
             </table>
           </div>
 
+          {o.fills.some((fillRow) => fillRow.allocations.length > 0) && (
+            <div className="mt-4 rounded-lg bg-slate-50 p-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Real-time allocation splits
+              </h4>
+              <div className="mt-3 space-y-3 text-sm">
+                {o.fills.map((fillRow) => (
+                  <div key={fillRow.id} className="rounded border border-slate-200 bg-white p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="font-mono text-xs text-slate-500">Fill #{fillRow.id}</span>
+                      <span className="text-xs text-slate-500">
+                        {fmtTime(fillRow.executedAt)} · {fillRow.quantity.toLocaleString()} shares
+                      </span>
+                    </div>
+                    <div className="grid gap-2">
+                      {fillRow.allocations.map((split) => {
+                        const instruction = o.allocationInstructions.find((allocation) => allocation.id === split.instructionId);
+                        return (
+                          <div key={split.id} className="flex items-center justify-between text-xs">
+                            <span className="text-slate-700">
+                              {instruction?.account ?? "Legacy account"}
+                            </span>
+                            <span className="font-mono text-slate-500">
+                              {split.shares.toLocaleString()} shares · ${split.notional.toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {tca && (
             <div className="mt-4 rounded-lg bg-slate-50 p-3">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -358,6 +416,38 @@ export default function OrderExecutionExpand({
           <p className="text-slate-600">
             <span className="font-medium text-slate-700">Notes:</span> {o.notes || "—"}
           </p>
+        </div>
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">
+            Pre-trade allocations
+          </h3>
+          {o.allocationInstructions.length > 0 ? (
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">Account</th>
+                    <th className="px-3 py-2">Split</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {o.allocationInstructions.map((allocation) => (
+                    <tr key={allocation.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{allocation.account}</td>
+                      <td className="px-3 py-2 tabular-nums">{allocation.weightPct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No allocation instructions on this order.</p>
+          )}
+          {o.allocationLockedAt && (
+            <p className="mt-2 text-xs text-emerald-700">
+              Locked {new Date(o.allocationLockedAt).toLocaleString()}
+            </p>
+          )}
         </div>
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase text-slate-500">

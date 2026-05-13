@@ -117,12 +117,13 @@ model Order {
 
   status OrderStatus @default(DRAFT)
 
-  fillStartedAt    DateTime?
-  fillCompletedAt  DateTime?
-  arrivalPrice     Float?
-  averageFillPrice Float?
-  filledQuantity   Int      @default(0)
-  remainingQuantity Int     @default(0)
+  fillStartedAt       DateTime?
+  fillCompletedAt     DateTime?
+  arrivalPrice        Float?
+  averageFillPrice    Float?
+  filledQuantity      Int      @default(0)
+  remainingQuantity   Int      @default(0)
+  allocationLockedAt  DateTime?
 
   traderId Int
   trader   User @relation("TraderOrders", fields: [traderId], references: [id])
@@ -138,13 +139,29 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  activities OrderActivity[]
-  breachLogs RiskBreachLog[]
-  fills      OrderFill[]
+  activities            OrderActivity[]
+  breachLogs            RiskBreachLog[]
+  allocationInstructions OrderAllocationInstruction[]
+  fills                 OrderFill[]
 
   @@index([status])
   @@index([traderId])
   @@index([createdAt])
+}
+
+model OrderAllocationInstruction {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence  Int
+  account   String
+  weightPct Float
+  createdAt DateTime @default(now())
+
+  fillAllocations OrderFillAllocation[]
+
+  @@index([orderId])
+  @@unique([orderId, sequence])
 }
 
 model OrderFill {
@@ -156,8 +173,23 @@ model OrderFill {
   price      Float
   executedAt DateTime @default(now())
 
+  allocations OrderFillAllocation[]
+
   @@index([orderId])
   @@unique([orderId, sequence])
+}
+
+model OrderFillAllocation {
+  id            Int                      @id @default(autoincrement())
+  fillId        Int
+  fill          OrderFill                @relation(fields: [fillId], references: [id], onDelete: Cascade)
+  instructionId Int
+  instruction   OrderAllocationInstruction @relation(fields: [instructionId], references: [id], onDelete: Cascade)
+  shares        Int
+  notional      Float
+
+  @@index([fillId])
+  @@index([instructionId])
 }
 
 model OrderActivity {

@@ -5,6 +5,13 @@ import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import { processSimulatedFillEngine } from "@/lib/trading/fill-engine";
 import { formatOrderTitle } from "@/lib/trading/order-format";
 import {
+  allocationWeightTotal,
+  formatAllocationSummary,
+  normalizeAllocationDrafts,
+  type AllocationDraft,
+  type AllocationInstructionInput,
+} from "@/lib/trading/allocation";
+import {
   OrderDirection,
   OrderStatus,
   OrderTypeEnum,
@@ -18,6 +25,7 @@ const orderInclude = {
   trader: { select: { id: true, name: true, email: true } },
   reviewer: { select: { id: true, name: true } },
   breachLogs: { orderBy: { createdAt: "desc" as const } },
+  allocationInstructions: { orderBy: { sequence: "asc" as const } },
   fills: { orderBy: { sequence: "asc" as const } },
 };
 
@@ -65,6 +73,11 @@ export async function GET() {
   }
 }
 
+const allocationDraftSchema = z.object({
+  account: z.string().min(1),
+  weightPct: z.number().positive(),
+});
+
 const createSchema = z.object({
   direction: z.enum(["BUY", "SELL", "SHORT"]),
   ticker: z.string().min(1).max(16),
@@ -72,6 +85,7 @@ const createSchema = z.object({
   orderType: z.enum(["MARKET", "LIMIT", "VWAP"]),
   limitPrice: z.number().nullable().optional(),
   account: z.string().min(1),
+  allocations: z.array(allocationDraftSchema).optional(),
   strategy: z.string().min(1),
   notes: z.string().optional(),
   mode: z.enum(["draft", "submit"]),
@@ -114,6 +128,22 @@ export async function POST(req: NextRequest) {
   });
 
   try {
+    const normalizedAllocations = normalizeAllocationDrafts(
+      (body.allocations ?? []).map((row) => ({
+        id: `alloc-${Math.random().toString(36).slice(2, 10)}`,
+        account: row.account,
+        weightPct: String(row.weightPct),
+      })),
+    );
+    const orderAllocations =
+      normalizedAllocations.length > 0
+        ? normalizedAllocations
+        : [{ account: body.account, weightPct: 100 }];
+    const accountSummary = formatAllocationSummary(orderAllocations);
+    if (Math.abs(allocationWeightTotal(orderAllocations) - 100) > 0.01) {
+      return NextResponse.json({ error: "Allocation splits must total 100%" }, { status: 400 });
+    }
+
     const maxRow = await prisma.order.findFirst({
       orderBy: { id: "desc" },
       select: { id: true },
@@ -139,13 +169,21 @@ export async function POST(req: NextRequest) {
             body.orderType === "LIMIT" && body.limitPrice != null
               ? String(body.limitPrice)
               : null,
-          account: body.account,
+          account: accountSummary,
           strategy: body.strategy,
           notes: body.notes ?? "",
           status,
           traderId,
           filledQuantity: 0,
           remainingQuantity: body.quantity,
+          allocationLockedAt: null,
+          allocationInstructions: {
+            create: orderAllocations.map((allocation, index) => ({
+              sequence: index + 1,
+              account: allocation.account,
+              weightPct: allocation.weightPct,
+            })),
+          },
         },
       });
 
