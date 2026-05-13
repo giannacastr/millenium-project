@@ -65,6 +65,8 @@ function pickSlippage(direction: OrderDirection): number {
   return Math.random() < positiveBias ? positive : negative;
 }
 
+let fillEngineRun: Promise<void> | null = null;
+
 async function fetchArrivalPrice(ticker: string): Promise<number> {
   const quote = await fetchMarketQuote(ticker);
   if ("error" in quote) {
@@ -235,61 +237,67 @@ async function advanceOrderFills(order: ActiveFillOrder) {
 }
 
 export async function processSimulatedFillEngine() {
-  const activeOrders = (await prisma.order.findMany({
-    where: {
-      status: {
-        in: [
-          OrderStatus.RISK_APPROVED,
-          OrderStatus.ACKNOWLEDGED,
-          OrderStatus.PARTIALLY_FILLED,
-        ],
-      },
-    },
-    select: {
-      id: true,
-      ticker: true,
-      quantity: true,
-      direction: true,
-      status: true,
-      fillStartedAt: true,
-      arrivalPrice: true,
-      filledQuantity: true,
-      remainingQuantity: true,
-      averageFillPrice: true,
-      allocationInstructions: {
-        orderBy: { sequence: "asc" },
-        select: {
-          id: true,
-          sequence: true,
-          account: true,
-          weightPct: true,
+  if (fillEngineRun) return fillEngineRun;
+
+  fillEngineRun = (async () => {
+    const activeOrders = (await prisma.order.findMany({
+      where: {
+        status: {
+          in: [
+            OrderStatus.RISK_APPROVED,
+            OrderStatus.ACKNOWLEDGED,
+            OrderStatus.PARTIALLY_FILLED,
+          ],
         },
       },
-      fills: {
-        orderBy: { sequence: "asc" },
-        select: {
-          id: true,
-          sequence: true,
-          quantity: true,
-          price: true,
-          executedAt: true,
-          allocations: {
-            select: {
-              id: true,
-              fillId: true,
-              instructionId: true,
-              shares: true,
-              notional: true,
+      select: {
+        id: true,
+        ticker: true,
+        quantity: true,
+        direction: true,
+        status: true,
+        fillStartedAt: true,
+        arrivalPrice: true,
+        filledQuantity: true,
+        remainingQuantity: true,
+        averageFillPrice: true,
+        allocationInstructions: {
+          orderBy: { sequence: "asc" },
+          select: {
+            id: true,
+            sequence: true,
+            account: true,
+            weightPct: true,
+          },
+        },
+        fills: {
+          orderBy: { sequence: "asc" },
+          select: {
+            id: true,
+            sequence: true,
+            quantity: true,
+            price: true,
+            executedAt: true,
+            allocations: {
+              select: {
+                id: true,
+                fillId: true,
+                instructionId: true,
+                shares: true,
+                notional: true,
+              },
             },
           },
         },
       },
-    },
-  })) as ActiveFillOrder[];
+    })) as ActiveFillOrder[];
 
-  for (const order of activeOrders) {
-    await advanceOrderFills(order);
-  }
+    await Promise.all(activeOrders.map((order) => advanceOrderFills(order)));
+  })().finally(() => {
+    fillEngineRun = null;
+  });
+
+  return fillEngineRun;
 }
 
 export async function initializeOrderFillSimulation(orderId: number) {

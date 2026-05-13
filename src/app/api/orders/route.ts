@@ -26,7 +26,10 @@ const orderInclude = {
   reviewer: { select: { id: true, name: true } },
   breachLogs: { orderBy: { createdAt: "desc" as const } },
   allocationInstructions: { orderBy: { sequence: "asc" as const } },
-  fills: { orderBy: { sequence: "asc" as const } },
+  fills: {
+    orderBy: { sequence: "asc" as const },
+    include: { allocations: true },
+  },
 };
 
 function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
@@ -46,8 +49,11 @@ export async function GET() {
   const uid = Number(session.user.id);
 
   try {
-    // Opportunistically run the fill engine on every poll.
-    await processSimulatedFillEngine();
+    // Opportunistically run the fill engine on every poll without blocking the
+    // current list response.
+    void processSimulatedFillEngine().catch((e) => {
+      console.error("[api/orders] fill engine failed", e);
+    });
 
     if (type === UserType.EQUITY_TRADER) {
       const rows = await prisma.order.findMany({

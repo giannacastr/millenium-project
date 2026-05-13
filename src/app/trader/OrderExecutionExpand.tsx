@@ -340,7 +340,7 @@ export default function OrderExecutionExpand({
             </table>
           </div>
 
-          {o.fills.some((fillRow) => fillRow.allocations.length > 0) && (
+          {o.fills.some((fillRow) => (fillRow.allocations?.length ?? 0) > 0) && (
             <div className="mt-4 rounded-lg bg-slate-50 p-3">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Real-time allocation splits
@@ -355,7 +355,7 @@ export default function OrderExecutionExpand({
                       </span>
                     </div>
                     <div className="grid gap-2">
-                      {fillRow.allocations.map((split) => {
+                      {(fillRow.allocations ?? []).map((split) => {
                         const instruction = o.allocationInstructions.find((allocation) => allocation.id === split.instructionId);
                         return (
                           <div key={split.id} className="flex items-center justify-between text-xs">
