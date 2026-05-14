@@ -238,7 +238,6 @@ export async function POST(
           },
         });
       });
-      await initializeOrderFillSimulation(orderId);
     } else if (body.action === "risk_reject") {
       if (userType !== UserType.RISK_OFFICER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -280,6 +279,8 @@ export async function POST(
           },
         });
       });
+      // Initialize fill simulation only after broker acknowledges
+      await initializeOrderFillSimulation(orderId);
     } else if (body.action === "broker_reject") {
       if (userType !== UserType.PRIME_BROKER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });

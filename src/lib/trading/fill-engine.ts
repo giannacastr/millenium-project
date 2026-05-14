@@ -38,7 +38,6 @@ type ActiveFillOrder = {
 
 function isFillActive(status: OrderStatus): boolean {
   const activeStatuses: OrderStatus[] = [
-    OrderStatus.RISK_APPROVED,
     OrderStatus.ACKNOWLEDGED,
     OrderStatus.PARTIALLY_FILLED,
   ];
