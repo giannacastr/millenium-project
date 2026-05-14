@@ -129,7 +129,6 @@ export default function TraderDesk() {
   const [amendSourceOrder, setAmendSourceOrder] = useState<ApiOrder | null>(null);
   const [cancelTargetOrder, setCancelTargetOrder] = useState<ApiOrder | null>(null);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
-  const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
   const [tickerOptions, setTickerOptions] = useState<string[]>(
     Object.keys(TICKER_META).sort(),
   );
@@ -248,6 +247,7 @@ export default function TraderDesk() {
     sector: "Other",
     price: 100,
   };
+  const currentTicketPrice = tickerDetails[ticket.ticker]?.price ?? tickerMeta.price;
   const filteredTickers = useMemo(() => {
     const query = tickerQuery.trim().toUpperCase();
     const base = [...tickerOptions].sort((a, b) => a.localeCompare(b));
@@ -262,7 +262,7 @@ export default function TraderDesk() {
     ticker: ticket.ticker,
     quantity: ticket.quantity,
     limitPrice: limitNum,
-    livePrice: liveLastPrice,
+    livePrice: currentTicketPrice,
     direction: ticket.direction,
     portfolio: exposureSnapshot ?? undefined,
   });
@@ -625,8 +625,8 @@ export default function TraderDesk() {
                                   runTransition(o.id, body)
                                 }
                                 currentPrice={
-                                  o.ticker === ticket.ticker && liveLastPrice
-                                    ? liveLastPrice
+                                  o.ticker === ticket.ticker
+                                    ? currentTicketPrice
                                     : undefined
                                 }
                               />
@@ -645,11 +645,18 @@ export default function TraderDesk() {
         <aside className="space-y-4">
           {selectedOrder && (
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {(() => {
+                const companyName =
+                  tickerDetails[selectedOrder.ticker]?.companyName ??
+                  TICKER_META[selectedOrder.ticker]?.companyName ??
+                  selectedOrder.ticker;
+                return (
+                  <>
               <h3 className="mb-3 text-sm font-semibold text-slate-900">
-                Selected order chart
+                {selectedOrder.ticketKey} · {companyName}
               </h3>
-              <p className="mb-3 text-xs text-slate-500">
-                {selectedOrder.ticketKey} · {selectedOrder.ticker} · click a different row to switch.
+              <p className="mb-3 text-xs italic text-slate-500">
+                Selected order chart. Click a different row to switch.
               </p>
               <IntradayTickerChart
                 ticker={selectedOrder.ticker}
@@ -660,13 +667,15 @@ export default function TraderDesk() {
                   quantity: fill.quantity,
                 }))}
                 currentPrice={
-                  liveLastPrice ??
                   selectedOrder.averageFillPrice ??
                   tickerDetails[selectedOrder.ticker]?.price ??
                   TICKER_META[selectedOrder.ticker]?.price ??
                   150
                 }
               />
+                  </>
+                );
+              })()}
             </section>
           )}
 
@@ -878,10 +887,7 @@ export default function TraderDesk() {
                   Start typing to filter available tickers in alphabetical order.
                 </p>
               </label>
-              <DraftTickerInsight
-                ticker={ticket.ticker}
-                onLastPrice={setLiveLastPrice}
-              />
+              <DraftTickerInsight ticker={ticket.ticker} />
               <label className="block text-sm">
                 <span className="text-slate-600">Quantity</span>
                 <input

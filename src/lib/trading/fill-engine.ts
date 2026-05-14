@@ -151,14 +151,15 @@ async function advanceOrderFills(order: ActiveFillOrder) {
         ? OrderStatus.FULLY_FILLED
         : OrderStatus.PARTIALLY_FILLED;
 
-    const fillAllocations = splitQuantityAcrossAllocations(fillQty, order.allocationInstructions.length > 0
-      ? order.allocationInstructions
-      : [{ id: 0, sequence: 1, account: order.ticker, weightPct: 100 }]).map((split) => ({
-      fillId: -sequence,
-      instructionId: split.id,
-      shares: split.shares,
-      notional: roundToCents(split.shares * fillPrice),
-    }));
+    const fillAllocations =
+      order.allocationInstructions.length > 0
+        ? splitQuantityAcrossAllocations(fillQty, order.allocationInstructions).map((split) => ({
+            fillId: -sequence,
+            instructionId: split.id,
+            shares: split.shares,
+            notional: roundToCents(split.shares * fillPrice),
+          }))
+        : [];
 
     await prisma.$transaction(async (tx) => {
       const createdFill = await tx.orderFill.create({
