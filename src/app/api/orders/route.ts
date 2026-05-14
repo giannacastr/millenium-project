@@ -133,13 +133,24 @@ export async function POST(req: NextRequest) {
       select: { ticker: true },
     }),
   ]);
+
+  const restrictedTickerList = restrictedStocks.map((rs) => rs.ticker);
+  const isRestricted = restrictedTickerList.includes(body.ticker.toUpperCase());
+  
+  if (isRestricted) {
+    return NextResponse.json(
+      { error: `${body.ticker.toUpperCase()} is on the restricted list and cannot be traded.` },
+      { status: 400 }
+    );
+  }
+
   const impact = computePreTradeImpact({
     ticker: body.ticker.toUpperCase(),
     quantity: body.quantity,
     limitPrice: body.limitPrice ?? undefined,
     direction,
     portfolio: snapshot,
-    restrictedStocks: restrictedStocks.map((rs) => rs.ticker),
+    restrictedStocks: restrictedTickerList,
   });
 
   try {
