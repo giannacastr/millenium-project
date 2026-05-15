@@ -540,7 +540,7 @@ export default function TraderDesk() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-30 border-b-[5px] border-[#1434CB] bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b-[4.5px] border-[#1434CB] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 py-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-500">
@@ -837,7 +837,7 @@ export default function TraderDesk() {
                     {fmtNav(exposureSnapshot.exposure.openOrderNotional)}
                   </dd>
                 </dl>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="mb-2 text-sm font-semibold text-slate-500">
                   Single-name weight (cap {exposureSnapshot.limits.singleNameCapPct}%)
                 </p>
                 <div className="max-h-44 space-y-2 overflow-y-auto text-sm">
@@ -861,7 +861,7 @@ export default function TraderDesk() {
                       </div>
                     ))}
                 </div>
-                <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="mb-2 mt-4 text-sm font-semibold text-slate-500">
                   Sector sleeves (cap {exposureSnapshot.limits.sectorCapPct}%)
                 </p>
                 <div className="max-h-36 space-y-1 overflow-y-auto text-xs">

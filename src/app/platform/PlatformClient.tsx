@@ -38,7 +38,7 @@ export default function PlatformClient() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       <div className="mx-auto max-w-4xl px-6 py-16">
-        <header className="mb-12 border-b-[5px] border-[#1434CB] pb-10 text-center">
+        <header className="mb-12 border-b-[4.5px] border-[#1434CB] pb-10 text-center">
           <p className="text-sm uppercase tracking-[0.2em] text-slate-400">
             Millennium
           </p>

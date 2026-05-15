@@ -45,7 +45,7 @@ export default function BuyingPowerGauge({
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       {title && (
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <h3 className="text-sm font-semibold text-slate-500">
           {title}
         </h3>
       )}

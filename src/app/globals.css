@@ -17,6 +17,19 @@ body {
   color: #1434CB;
 }
 
+h1, h2, h3, h4, h5, h6,
+.font-semibold.uppercase.tracking-wide {
+  font-family: "Times New Roman", Times, serif;
+  font-size: calc(1em + 4px);
+}
+
+aside h1, aside h2, aside h3, aside h4, aside h5, aside h6,
+aside .font-semibold.uppercase.tracking-wide {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+}
+
 .text-slate-50, .text-slate-100, .text-slate-200, .text-slate-300,
 .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700,
 .text-slate-800, .text-slate-900, .text-slate-950,
