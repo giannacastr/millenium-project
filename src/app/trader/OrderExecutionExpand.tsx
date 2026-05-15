@@ -20,7 +20,7 @@ function pendingStageLabel(status: OrderStatus): string {
     case "RISK_APPROVED":
       return "At prime broker";
     case "ACKNOWLEDGED":
-      return "Ready to simulate fill";
+      return "Awaiting fill";
     default:
       return status;
   }
@@ -281,35 +281,7 @@ export default function OrderExecutionExpand({
             Submit for review
           </button>
         )}
-        {o.status === "ACKNOWLEDGED" && (
-          <>
-            <button
-              type="button"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              onClick={() =>
-                onRunTransition({
-                  action: "simulate_partial_fill",
-                  filledQty: Math.floor(o.quantity / 2),
-                  price: Number(o.limitPrice ?? 180),
-                })
-              }
-            >
-              Sim partial fill
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white"
-              onClick={() =>
-                onRunTransition({
-                  action: "simulate_full_fill",
-                  price: Number(o.limitPrice ?? 180),
-                })
-              }
-            >
-              Sim full fill
-            </button>
-          </>
-        )}
+
         {o.status === "PARTIALLY_FILLED" && (
           <button
             type="button"
