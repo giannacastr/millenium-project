@@ -43,6 +43,15 @@ type ApiOrder = {
   account: string;
   strategy: string;
   notes: string | null;
+  shortLocateStatus?: string | null;
+  shortLocateId?: string | null;
+  shortLocateQuantity?: number | null;
+  shortBorrowRateCapPct?: number | null;
+  shortBorrowRatePct?: number | null;
+  shortLocateProvider?: string | null;
+  shortLocateRequestedAt?: string | null;
+  shortLocateRespondedAt?: string | null;
+  shortLocateExpiresAt?: string | null;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
@@ -75,6 +84,10 @@ type TicketState = {
   allocations: AllocationDraft[];
   strategy: string;
   notes: string;
+  shortLocateQuantity: number;
+  shortBorrowRateCapPct: string;
+  shortLocateProvider: string;
+  shortLocateNotes: string;
 };
 
 function createEmptyTicket(): TicketState {
@@ -87,6 +100,10 @@ function createEmptyTicket(): TicketState {
     allocations: [createAllocationDraft(ACCOUNT_OPTIONS[0], "100")],
     strategy: STRATEGY_OPTIONS[0],
     notes: "",
+    shortLocateQuantity: 5000,
+    shortBorrowRateCapPct: "0.50",
+    shortLocateProvider: "",
+    shortLocateNotes: "",
   };
 }
 
@@ -105,6 +122,10 @@ function createTicketFromOrder(order: ApiOrder): TicketState {
         : [createAllocationDraft(order.account, "100")],
     strategy: order.strategy,
     notes: order.notes ?? "",
+    shortLocateQuantity: order.shortLocateQuantity ?? order.quantity,
+    shortBorrowRateCapPct: order.shortBorrowRateCapPct != null ? String(order.shortBorrowRateCapPct) : "0.50",
+    shortLocateProvider: order.shortLocateProvider ?? "",
+    shortLocateNotes: order.notes ?? "",
   };
 }
 
@@ -344,7 +365,18 @@ export default function TraderDesk() {
       account: allocationSummary,
       allocations: normalizedAllocations,
       strategy: ticket.strategy,
-      notes: ticket.notes,
+      notes:
+        ticket.direction === "SHORT" && ticket.shortLocateNotes.trim().length > 0
+          ? `${ticket.notes ? `${ticket.notes}\n\n` : ""}${ticket.shortLocateNotes.trim()}`
+          : ticket.notes,
+      shortLocateQuantity:
+        ticket.direction === "SHORT" ? ticket.shortLocateQuantity : undefined,
+      shortBorrowRateCapPct:
+        ticket.direction === "SHORT" && ticket.shortBorrowRateCapPct.trim().length > 0
+          ? Number(ticket.shortBorrowRateCapPct)
+          : undefined,
+      shortLocateProvider:
+        ticket.direction === "SHORT" ? ticket.shortLocateProvider : undefined,
       mode,
     };
 
@@ -814,7 +846,16 @@ export default function TraderDesk() {
                     key={d}
                     type="button"
                     onClick={() =>
-                      setTicket((t) => ({ ...t, direction: d }))
+                      setTicket((t) => ({
+                        ...t,
+                        direction: d,
+                        allocations:
+                          d === "SHORT" && t.allocations.length === 1 && t.allocations[0].account === "Long Book"
+                            ? [createAllocationDraft("Short Book", t.allocations[0].weightPct)]
+                            : d !== "SHORT" && t.allocations.length === 1 && t.allocations[0].account === "Short Book"
+                              ? [createAllocationDraft("Long Book", t.allocations[0].weightPct)]
+                              : t.allocations,
+                      }))
                     }
                     className={`flex-1 rounded-lg py-2 text-sm font-medium ${
                       ticket.direction === d
@@ -893,12 +934,17 @@ export default function TraderDesk() {
                 <input
                   type="number"
                   value={ticket.quantity}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const nextQty = Number(e.target.value);
                     setTicket((t) => ({
                       ...t,
-                      quantity: Number(e.target.value),
-                    }))
-                  }
+                      quantity: nextQty,
+                      shortLocateQuantity:
+                        t.direction === "SHORT" && t.shortLocateQuantity === t.quantity
+                          ? nextQty
+                          : t.shortLocateQuantity,
+                    }));
+                  }}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                 />
               </label>
@@ -931,6 +977,62 @@ export default function TraderDesk() {
                     className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                   />
                 </label>
+              )}
+              {ticket.direction === "SHORT" && (
+                <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-indigo-900">Short locate request</h3>
+                    <p className="mt-1 text-xs text-indigo-800/80">
+                      Request the borrow before the broker can acknowledge and release the short to market.
+                    </p>
+                  </div>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Locate shares requested</span>
+                    <input
+                      type="number"
+                      value={ticket.shortLocateQuantity}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateQuantity: Number(e.target.value) }))
+                      }
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Max borrow rate (% annual)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={ticket.shortBorrowRateCapPct}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortBorrowRateCapPct: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Preferred locate source</span>
+                    <input
+                      type="text"
+                      value={ticket.shortLocateProvider}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateProvider: e.target.value }))
+                      }
+                      placeholder="Prime broker, internal inventory, etc."
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Short rationale / cover plan</span>
+                    <textarea
+                      value={ticket.shortLocateNotes}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateNotes: e.target.value }))
+                      }
+                      rows={3}
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                </section>
               )}
               <PreTradeAllocationEditor
                 value={ticket.allocations}

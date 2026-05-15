@@ -63,6 +63,15 @@ export type ExpandOrder = {
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  shortLocateStatus?: string | null;
+  shortLocateId?: string | null;
+  shortLocateQuantity?: number | null;
+  shortBorrowRateCapPct?: number | null;
+  shortBorrowRatePct?: number | null;
+  shortLocateProvider?: string | null;
+  shortLocateRequestedAt?: string | null;
+  shortLocateRespondedAt?: string | null;
+  shortLocateExpiresAt?: string | null;
   filledQuantity: number;
   remainingQuantity: number;
   averageFillPrice: number | null;
@@ -200,6 +209,33 @@ export default function OrderExecutionExpand({
     </p>
   );
 
+  const shortLocatePanel = o.direction === "SHORT" ? (
+    <section className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+      <h4 className="text-sm font-semibold text-indigo-900">Short locate</h4>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        <div className="text-slate-500">Locate status</div>
+        <div>{o.shortLocateStatus ?? "NOT_REQUIRED"}</div>
+        <div className="text-slate-500">Requested shares</div>
+        <div>{o.shortLocateQuantity?.toLocaleString() ?? o.quantity.toLocaleString()}</div>
+        <div className="text-slate-500">Borrow cap</div>
+        <div>{o.shortBorrowRateCapPct != null ? `${o.shortBorrowRateCapPct.toFixed(2)}%` : "—"}</div>
+        <div className="text-slate-500">Confirmed borrow</div>
+        <div>{o.shortBorrowRatePct != null ? `${o.shortBorrowRatePct.toFixed(2)}%` : "—"}</div>
+        <div className="text-slate-500">Locate ID</div>
+        <div className="break-all">{o.shortLocateId ?? "—"}</div>
+        <div className="text-slate-500">Provider</div>
+        <div>{o.shortLocateProvider ?? "—"}</div>
+      </div>
+      {(o.shortLocateRequestedAt || o.shortLocateRespondedAt || o.shortLocateExpiresAt) && (
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+          <div>Requested: {o.shortLocateRequestedAt ? fmtTime(o.shortLocateRequestedAt) : "—"}</div>
+          <div>Responded: {o.shortLocateRespondedAt ? fmtTime(o.shortLocateRespondedAt) : "—"}</div>
+          <div>Expires: {o.shortLocateExpiresAt ? fmtTime(o.shortLocateExpiresAt) : "—"}</div>
+        </div>
+      )}
+    </section>
+  ) : null;
+
   return (
     <div className="border-l-4 border-blue-500 bg-slate-50/90 px-4 py-4">
       <div className="mb-3">
@@ -216,6 +252,10 @@ export default function OrderExecutionExpand({
           This desk polls every few seconds; other tabs can advance the ticket.
         </p>
       </div>
+
+      {shortLocatePanel && (
+        <div className="mb-4">{shortLocatePanel}</div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {o.status === "FULLY_FILLED" && !o.allocationLockedAt && o.allocationInstructions.length > 0 && (

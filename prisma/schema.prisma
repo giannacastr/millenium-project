@@ -38,6 +38,13 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum ShortLocateStatus {
+  NOT_REQUIRED
+  REQUESTED
+  CONFIRMED
+  EXPIRED
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -116,6 +123,16 @@ model Order {
   notes       String?
 
   status OrderStatus @default(DRAFT)
+
+  shortLocateStatus      ShortLocateStatus @default(NOT_REQUIRED)
+  shortLocateId          String?
+  shortLocateQuantity    Int?
+  shortBorrowRateCapPct  Float?
+  shortBorrowRatePct     Float?
+  shortLocateProvider    String?
+  shortLocateRequestedAt DateTime?
+  shortLocateRespondedAt DateTime?
+  shortLocateExpiresAt   DateTime?
 
   fillStartedAt       DateTime?
   fillCompletedAt     DateTime?

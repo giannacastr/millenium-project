@@ -4,7 +4,7 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   DRAFT: "Draft",
   SUBMITTED: "Submitted",
   IN_REVIEW: "In Review",
-  RISK_APPROVED: "Approved (broker)",
+  RISK_APPROVED: "Approved / broker pending",
   ACKNOWLEDGED: "Acknowledged",
   PARTIALLY_FILLED: "Partially Filled",
   FULLY_FILLED: "Fully Filled",

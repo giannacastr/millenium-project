@@ -15,6 +15,7 @@ import {
   OrderDirection,
   OrderStatus,
   OrderTypeEnum,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -97,6 +98,9 @@ const createSchema = z.object({
   allocations: z.array(allocationDraftSchema).optional(),
   strategy: z.string().min(1),
   notes: z.string().optional(),
+  shortLocateQuantity: z.number().int().positive().optional(),
+  shortBorrowRateCapPct: z.number().positive().optional(),
+  shortLocateProvider: z.string().optional(),
   mode: z.enum(["draft", "submit"]),
 });
 
@@ -199,6 +203,20 @@ export async function POST(req: NextRequest) {
           strategy: body.strategy,
           notes: body.notes ?? "",
           status,
+          shortLocateStatus:
+            direction === OrderDirection.SHORT && status === OrderStatus.SUBMITTED
+              ? ShortLocateStatus.REQUESTED
+              : ShortLocateStatus.NOT_REQUIRED,
+          shortLocateQuantity:
+            direction === OrderDirection.SHORT ? body.shortLocateQuantity ?? body.quantity : null,
+          shortBorrowRateCapPct:
+            direction === OrderDirection.SHORT ? body.shortBorrowRateCapPct ?? null : null,
+          shortLocateProvider:
+            direction === OrderDirection.SHORT ? body.shortLocateProvider ?? null : null,
+          shortLocateRequestedAt:
+            direction === OrderDirection.SHORT && status === OrderStatus.SUBMITTED
+              ? new Date()
+              : null,
           traderId,
           filledQuantity: 0,
           remainingQuantity: body.quantity,
@@ -219,7 +237,9 @@ export async function POST(req: NextRequest) {
           message:
             status === OrderStatus.DRAFT
               ? `Draft saved by ${traderName}`
-              : `Submitted by ${traderName} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+              : direction === OrderDirection.SHORT
+                ? `Short entry requested by ${traderName} · locate requested from prime broker`
+                : `Submitted by ${traderName} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
           actorName: traderName,
         },
       });

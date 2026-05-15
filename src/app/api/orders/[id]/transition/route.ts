@@ -5,6 +5,7 @@ import { computePreTradeImpact } from "@/lib/trading/risk";
 import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import {
   OrderStatus,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -29,6 +30,11 @@ const bodySchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("broker_ack"),
+    shortLocateId: z.string().min(1).optional(),
+    shortLocateQuantity: z.number().int().positive().optional(),
+    shortBorrowRatePct: z.number().positive().optional(),
+    shortLocateProvider: z.string().min(1).optional(),
+    shortLocateExpiresAt: z.string().datetime().optional().nullable(),
   }),
   z.object({
     action: z.literal("broker_reject"),
@@ -120,7 +126,19 @@ export async function POST(
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.SUBMITTED },
+          data: {
+            status: OrderStatus.SUBMITTED,
+            shortLocateStatus:
+              order.direction === "SHORT"
+                ? ShortLocateStatus.REQUESTED
+                : order.shortLocateStatus,
+            shortLocateRequestedAt:
+              order.direction === "SHORT" ? new Date() : order.shortLocateRequestedAt,
+            shortLocateQuantity:
+              order.direction === "SHORT"
+                ? order.shortLocateQuantity ?? order.quantity
+                : order.shortLocateQuantity,
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -129,6 +147,15 @@ export async function POST(
             actorName,
           },
         });
+        if (order.direction === "SHORT") {
+          await tx.orderActivity.create({
+            data: {
+              orderId,
+              message: `Short locate requested from prime broker`,
+              actorName: "System",
+            },
+          });
+        }
         for (const check of impact.triggeredChecks) {
           await tx.orderActivity.create({
             data: {
@@ -191,7 +218,10 @@ export async function POST(
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.IN_REVIEW, reviewedById: uid },
+          data: {
+            status: OrderStatus.IN_REVIEW,
+            reviewedById: uid,
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -238,6 +268,15 @@ export async function POST(
           },
         });
       });
+      if (order.direction === "SHORT") {
+        await prisma.orderActivity.create({
+          data: {
+            orderId,
+            message: `Short entry approved by risk — locate now required from prime broker`,
+            actorName: "System",
+          },
+        });
+      }
     } else if (body.action === "risk_reject") {
       if (userType !== UserType.RISK_OFFICER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -266,15 +305,48 @@ export async function POST(
       if (order.status !== OrderStatus.RISK_APPROVED) {
         return NextResponse.json({ error: "Invalid state" }, { status: 400 });
       }
+      const isShort = order.direction === "SHORT";
+      const shortLocateProvided = isShort
+        ? body.shortLocateId && body.shortLocateQuantity && body.shortBorrowRatePct && body.shortLocateProvider
+        : true;
+      if (isShort && !shortLocateProvided) {
+        return NextResponse.json(
+          { error: "Short orders require locate details before broker acknowledgment" },
+          { status: 400 },
+        );
+      }
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.ACKNOWLEDGED },
+          data: {
+            status: OrderStatus.ACKNOWLEDGED,
+            shortLocateStatus: isShort
+              ? ShortLocateStatus.CONFIRMED
+              : order.shortLocateStatus,
+            shortLocateId: isShort ? body.shortLocateId ?? null : order.shortLocateId,
+            shortLocateQuantity: isShort
+              ? body.shortLocateQuantity ?? order.shortLocateQuantity
+              : order.shortLocateQuantity,
+            shortBorrowRatePct: isShort
+              ? body.shortBorrowRatePct ?? order.shortBorrowRatePct
+              : order.shortBorrowRatePct,
+            shortLocateProvider: isShort
+              ? body.shortLocateProvider ?? order.shortLocateProvider
+              : order.shortLocateProvider,
+            shortLocateExpiresAt: isShort
+              ? body.shortLocateExpiresAt
+                ? new Date(body.shortLocateExpiresAt)
+                : order.shortLocateExpiresAt
+              : order.shortLocateExpiresAt,
+            shortLocateRespondedAt: isShort ? new Date() : order.shortLocateRespondedAt,
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Acknowledged by Prime Broker (${actorName})`,
+            message: isShort
+              ? `Locate ${body.shortLocateId} provided by ${body.shortLocateProvider} at ${body.shortBorrowRatePct}% annual; acknowledged by Prime Broker (${actorName})`
+              : `Acknowledged by Prime Broker (${actorName})`,
             actorName,
           },
         });

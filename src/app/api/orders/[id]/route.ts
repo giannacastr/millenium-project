@@ -10,6 +10,7 @@ import {
   OrderDirection,
   OrderStatus,
   OrderTypeEnum,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -30,6 +31,9 @@ const patchDraftSchema = z.object({
   allocations: z.array(allocationDraftSchema).optional(),
   strategy: z.string().min(1).optional(),
   notes: z.string().optional(),
+  shortLocateQuantity: z.number().int().positive().optional(),
+  shortBorrowRateCapPct: z.number().positive().optional(),
+  shortLocateProvider: z.string().optional(),
 });
 
 export async function PATCH(
@@ -114,6 +118,22 @@ export async function PATCH(
         account: accountSummary,
         strategy: body.strategy ?? existing.strategy,
         notes: body.notes ?? existing.notes,
+        shortLocateStatus:
+          direction === OrderDirection.SHORT
+            ? existing.shortLocateStatus ?? ShortLocateStatus.NOT_REQUIRED
+            : ShortLocateStatus.NOT_REQUIRED,
+        shortLocateQuantity:
+          direction === OrderDirection.SHORT
+            ? body.shortLocateQuantity ?? existing.shortLocateQuantity ?? quantity
+            : null,
+        shortBorrowRateCapPct:
+          direction === OrderDirection.SHORT
+            ? body.shortBorrowRateCapPct ?? existing.shortBorrowRateCapPct ?? null
+            : null,
+        shortLocateProvider:
+          direction === OrderDirection.SHORT
+            ? body.shortLocateProvider ?? existing.shortLocateProvider ?? null
+            : null,
         title,
         filledQuantity: 0,
         remainingQuantity: quantity,
