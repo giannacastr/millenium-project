@@ -189,14 +189,18 @@ export default function TraderDesk() {
   }, []);
 
   const loadExposure = useCallback(async () => {
-    const res = await fetch("/api/exposure", { cache: "no-store" });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.exposure && data.limits) {
-      setExposureSnapshot({
-        exposure: data.exposure as ExposureDTO,
-        limits: data.limits as RiskLimitsDTO,
-      });
+    try {
+      const res = await fetch("/api/exposure", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.exposure && data.limits) {
+        setExposureSnapshot({
+          exposure: data.exposure as ExposureDTO,
+          limits: data.limits as RiskLimitsDTO,
+        });
+      }
+    } catch {
+      // non-critical; exposure loads on next poll
     }
   }, []);
 
@@ -474,6 +478,8 @@ export default function TraderDesk() {
   const [leftWidth, setLeftWidth] = useState<number | null>(null);
   const [isLargeScreen, setIsLargeScreen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 1024px)");
@@ -1117,9 +1123,39 @@ export default function TraderDesk() {
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                     />
                   </label>
-                  <label className="block text-sm">
-                    <span className="text-slate-600">Short rationale / cover plan</span>
-                    <p className="text-xs text-slate-500">Explain why you expect the stock to fall and how/when you plan to cover (buy back) the position.</p>
+                  <div className="block text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600">Short rationale / cover plan</span>
+                      <button
+                        type="button"
+                        disabled={aiLoading || !ticket.ticker}
+                        onClick={async () => {
+                          setAiLoading(true);
+                          setAiError(null);
+                          try {
+                            const res = await fetch("/api/ai/generate-rationale", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ ticker: ticket.ticker }),
+                            });
+                            const data = await res.json();
+                            if (res.ok) {
+                              setTicket((t) => ({ ...t, shortLocateNotes: data.rationale }));
+                            } else {
+                              setAiError(data.error ?? "Failed to generate");
+                            }
+                          } catch {
+                            setAiError("Network error");
+                          } finally {
+                            setAiLoading(false);
+                          }
+                        }}
+                        className="rounded bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-200 disabled:opacity-40"
+                      >
+                        {aiLoading ? "Generating..." : "Generate with AI"}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Explain why you expect the stock to fall and how/when you plan to cover (buy back) the position.</p>
                     <textarea
                       value={ticket.shortLocateNotes}
                       onChange={(e) =>
@@ -1128,7 +1164,8 @@ export default function TraderDesk() {
                       rows={3}
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                     />
-                  </label>
+                    {aiError && <p className="mt-1 text-xs text-red-600">{aiError}</p>}
+                  </div>
                 </section>
               )}
               <PreTradeAllocationEditor
