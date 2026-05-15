@@ -253,7 +253,7 @@ export default function IntradayTickerChart({
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <h3 className="text-sm font-semibold text-slate-900">
             Price chart
           </h3>
           <p className="mt-1 text-sm font-medium text-slate-900">{ticker}</p>

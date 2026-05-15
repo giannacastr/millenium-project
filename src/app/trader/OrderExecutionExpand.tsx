@@ -237,14 +237,14 @@ export default function OrderExecutionExpand({
   ) : null;
 
   return (
-    <div className="border-l-4 border-blue-500 bg-slate-50/90 px-4 py-4">
+    <div className="ticket-detail border-l-4 border-blue-500 bg-slate-50/90 px-4 py-4">
       <div className="mb-3">
         <p className="font-mono text-sm text-blue-600">{o.ticketKey}</p>
         <h2 className="text-lg font-semibold text-slate-900">{o.title}</h2>
       </div>
 
       <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        <p className="font-semibold uppercase tracking-wide text-slate-500" style={{ fontSize: 13 }}>
           Execution & pipeline
         </p>
         <div className="mt-2">{executionLead}</div>

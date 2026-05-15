@@ -24,7 +24,9 @@ h1, h2, h3, h4, h5, h6,
 }
 
 aside h1, aside h2, aside h3, aside h4, aside h5, aside h6,
-aside .font-semibold.uppercase.tracking-wide {
+aside .font-semibold.uppercase.tracking-wide,
+.ticket-detail h1, .ticket-detail h2, .ticket-detail h3, .ticket-detail h4, .ticket-detail h5, .ticket-detail h6,
+.ticket-detail .font-semibold.uppercase.tracking-wide {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
     "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
     sans-serif;
