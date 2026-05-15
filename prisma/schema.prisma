@@ -33,8 +33,16 @@ enum OrderStatus {
   ACKNOWLEDGED
   PARTIALLY_FILLED
   FULLY_FILLED
+  CANCELLED_PARTIAL
   REJECTED
   CANCELLED
+}
+
+enum ShortLocateStatus {
+  NOT_REQUIRED
+  REQUESTED
+  CONFIRMED
+  EXPIRED
 }
 
 model User {
@@ -101,9 +109,9 @@ model PasswordResetToken {
 }
 
 model Order {
-  id       Int    @id @default(autoincrement())
+  id        Int    @id @default(autoincrement())
   ticketKey String @unique
-  title    String?
+  title     String?
 
   direction   OrderDirection
   ticker      String
@@ -115,6 +123,24 @@ model Order {
   notes       String?
 
   status OrderStatus @default(DRAFT)
+
+  shortLocateStatus      ShortLocateStatus @default(NOT_REQUIRED)
+  shortLocateId          String?
+  shortLocateQuantity    Int?
+  shortBorrowRateCapPct  Float?
+  shortBorrowRatePct     Float?
+  shortLocateProvider    String?
+  shortLocateRequestedAt DateTime?
+  shortLocateRespondedAt DateTime?
+  shortLocateExpiresAt   DateTime?
+
+  fillStartedAt       DateTime?
+  fillCompletedAt     DateTime?
+  arrivalPrice        Float?
+  averageFillPrice    Float?
+  filledQuantity      Int      @default(0)
+  remainingQuantity   Int      @default(0)
+  allocationLockedAt  DateTime?
 
   traderId Int
   trader   User @relation("TraderOrders", fields: [traderId], references: [id])
@@ -130,12 +156,57 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  activities OrderActivity[]
-  breachLogs RiskBreachLog[]
+  activities            OrderActivity[]
+  breachLogs            RiskBreachLog[]
+  allocationInstructions OrderAllocationInstruction[]
+  fills                 OrderFill[]
 
   @@index([status])
   @@index([traderId])
   @@index([createdAt])
+}
+
+model OrderAllocationInstruction {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence  Int
+  account   String
+  weightPct Float
+  createdAt DateTime @default(now())
+
+  fillAllocations OrderFillAllocation[]
+
+  @@index([orderId])
+  @@unique([orderId, sequence])
+}
+
+model OrderFill {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence   Int
+  quantity   Int
+  price      Float
+  executedAt DateTime @default(now())
+
+  allocations OrderFillAllocation[]
+
+  @@index([orderId])
+  @@unique([orderId, sequence])
+}
+
+model OrderFillAllocation {
+  id            Int                      @id @default(autoincrement())
+  fillId        Int
+  fill          OrderFill                @relation(fields: [fillId], references: [id], onDelete: Cascade)
+  instructionId Int
+  instruction   OrderAllocationInstruction @relation(fields: [instructionId], references: [id], onDelete: Cascade)
+  shares        Int
+  notional      Float
+
+  @@index([fillId])
+  @@index([instructionId])
 }
 
 model OrderActivity {
@@ -182,4 +253,12 @@ model RiskLimit {
   maxOrderNotional      Float    @default(5000000)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+model RestrictedStock {
+  id        Int      @id @default(autoincrement())
+  ticker    String   @unique
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

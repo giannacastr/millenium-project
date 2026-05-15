@@ -1,9 +1,11 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { initializeOrderFillSimulation } from "@/lib/trading/fill-engine";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import { computeExposureSnapshot } from "@/lib/trading/portfolio";
 import {
   OrderStatus,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -28,11 +30,19 @@ const bodySchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("broker_ack"),
+    shortLocateId: z.string().min(1).optional(),
+    shortLocateQuantity: z.number().int().positive().optional(),
+    shortBorrowRatePct: z.number().positive().optional(),
+    shortLocateProvider: z.string().min(1).optional(),
+    shortLocateExpiresAt: z.string().datetime().optional().nullable(),
   }),
   z.object({
     action: z.literal("broker_reject"),
     code: z.string().min(1),
     reason: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("lock_allocations"),
   }),
   z.object({
     action: z.literal("simulate_partial_fill"),
@@ -76,6 +86,11 @@ export async function POST(
     include: {
       activities: { orderBy: { createdAt: "asc" } },
       trader: true,
+      allocationInstructions: { orderBy: { sequence: "asc" } },
+      fills: {
+        orderBy: { sequence: "asc" },
+        include: { allocations: true },
+      },
     },
   });
 
@@ -91,21 +106,39 @@ export async function POST(
       if (order.status !== OrderStatus.DRAFT) {
         return NextResponse.json({ error: "Not a draft" }, { status: 400 });
       }
-      const snapshot = await computeExposureSnapshot({
-        extraSymbols: [order.ticker],
-      });
+      const [snapshot, restrictedStocks] = await Promise.all([
+        computeExposureSnapshot({
+          extraSymbols: [order.ticker],
+        }),
+        prisma.restrictedStock.findMany({
+          select: { ticker: true },
+        }),
+      ]);
       const impact = computePreTradeImpact({
         ticker: order.ticker,
         quantity: order.quantity,
         limitPrice: order.limitPrice ? Number(order.limitPrice) : undefined,
         direction: order.direction,
         portfolio: snapshot,
+        restrictedStocks: restrictedStocks.map((rs) => rs.ticker),
       });
 
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.SUBMITTED },
+          data: {
+            status: OrderStatus.SUBMITTED,
+            shortLocateStatus:
+              order.direction === "SHORT"
+                ? ShortLocateStatus.REQUESTED
+                : order.shortLocateStatus,
+            shortLocateRequestedAt:
+              order.direction === "SHORT" ? new Date() : order.shortLocateRequestedAt,
+            shortLocateQuantity:
+              order.direction === "SHORT"
+                ? order.shortLocateQuantity ?? order.quantity
+                : order.shortLocateQuantity,
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -114,6 +147,15 @@ export async function POST(
             actorName,
           },
         });
+        if (order.direction === "SHORT") {
+          await tx.orderActivity.create({
+            data: {
+              orderId,
+              message: `Short locate requested from prime broker`,
+              actorName: "System",
+            },
+          });
+        }
         for (const check of impact.triggeredChecks) {
           await tx.orderActivity.create({
             data: {
@@ -138,19 +180,30 @@ export async function POST(
       }
       if (
         order.status !== OrderStatus.DRAFT &&
-        order.status !== OrderStatus.SUBMITTED
+        order.status !== OrderStatus.SUBMITTED &&
+        order.status !== OrderStatus.IN_REVIEW &&
+        order.status !== OrderStatus.RISK_APPROVED &&
+        order.status !== OrderStatus.ACKNOWLEDGED &&
+        order.status !== OrderStatus.PARTIALLY_FILLED
       ) {
         return NextResponse.json({ error: "Cannot cancel" }, { status: 400 });
       }
+      const cancelledPartial = (order.filledQuantity ?? 0) > 0 || order.fills.length > 0;
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.CANCELLED },
+          data: {
+            status: cancelledPartial
+              ? OrderStatus.CANCELLED_PARTIAL
+              : OrderStatus.CANCELLED,
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Cancelled by ${actorName}`,
+            message: cancelledPartial
+              ? `Cancelled by ${actorName} after partial fills`
+              : `Cancelled by ${actorName}`,
             actorName,
           },
         });
@@ -165,7 +218,10 @@ export async function POST(
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.IN_REVIEW, reviewedById: uid },
+          data: {
+            status: OrderStatus.IN_REVIEW,
+            reviewedById: uid,
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -212,6 +268,15 @@ export async function POST(
           },
         });
       });
+      if (order.direction === "SHORT") {
+        await prisma.orderActivity.create({
+          data: {
+            orderId,
+            message: `Short entry approved by risk — locate now required from prime broker`,
+            actorName: "System",
+          },
+        });
+      }
     } else if (body.action === "risk_reject") {
       if (userType !== UserType.RISK_OFFICER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -240,19 +305,54 @@ export async function POST(
       if (order.status !== OrderStatus.RISK_APPROVED) {
         return NextResponse.json({ error: "Invalid state" }, { status: 400 });
       }
+      const isShort = order.direction === "SHORT";
+      const shortLocateProvided = isShort
+        ? body.shortLocateId && body.shortLocateQuantity && body.shortBorrowRatePct && body.shortLocateProvider
+        : true;
+      if (isShort && !shortLocateProvided) {
+        return NextResponse.json(
+          { error: "Short orders require locate details before broker acknowledgment" },
+          { status: 400 },
+        );
+      }
       await prisma.$transaction(async (tx) => {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.ACKNOWLEDGED },
+          data: {
+            status: OrderStatus.ACKNOWLEDGED,
+            shortLocateStatus: isShort
+              ? ShortLocateStatus.CONFIRMED
+              : order.shortLocateStatus,
+            shortLocateId: isShort ? body.shortLocateId ?? null : order.shortLocateId,
+            shortLocateQuantity: isShort
+              ? body.shortLocateQuantity ?? order.shortLocateQuantity
+              : order.shortLocateQuantity,
+            shortBorrowRatePct: isShort
+              ? body.shortBorrowRatePct ?? order.shortBorrowRatePct
+              : order.shortBorrowRatePct,
+            shortLocateProvider: isShort
+              ? body.shortLocateProvider ?? order.shortLocateProvider
+              : order.shortLocateProvider,
+            shortLocateExpiresAt: isShort
+              ? body.shortLocateExpiresAt
+                ? new Date(body.shortLocateExpiresAt)
+                : order.shortLocateExpiresAt
+              : order.shortLocateExpiresAt,
+            shortLocateRespondedAt: isShort ? new Date() : order.shortLocateRespondedAt,
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Acknowledged by Prime Broker (${actorName})`,
+            message: isShort
+              ? `Locate ${body.shortLocateId} provided by ${body.shortLocateProvider} at ${body.shortBorrowRatePct}% annual; acknowledged by Prime Broker (${actorName})`
+              : `Acknowledged by Prime Broker (${actorName})`,
             actorName,
           },
         });
       });
+      // Initialize fill simulation only after broker acknowledges
+      await initializeOrderFillSimulation(orderId);
     } else if (body.action === "broker_reject") {
       if (userType !== UserType.PRIME_BROKER) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -277,6 +377,29 @@ export async function POST(
           },
         });
       });
+    } else if (body.action === "lock_allocations") {
+      if (userType !== UserType.EQUITY_TRADER || order.traderId !== uid) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (order.status !== OrderStatus.FULLY_FILLED) {
+        return NextResponse.json({ error: "Invalid state" }, { status: 400 });
+      }
+      if (order.allocationInstructions.length === 0) {
+        return NextResponse.json({ error: "No allocations to lock" }, { status: 400 });
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { allocationLockedAt: new Date() },
+        });
+        await tx.orderActivity.create({
+          data: {
+            orderId,
+            message: `Allocations confirmed and locked by ${actorName}`,
+            actorName,
+          },
+        });
+      });
     } else if (body.action === "simulate_partial_fill") {
       if (userType !== UserType.EQUITY_TRADER || order.traderId !== uid) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -288,14 +411,65 @@ export async function POST(
         return NextResponse.json({ error: "Invalid state" }, { status: 400 });
       }
       await prisma.$transaction(async (tx) => {
+        const fillQty = Math.min(body.filledQty, order.quantity - (order.filledQuantity ?? 0));
+        if (fillQty <= 0) {
+          throw new Error("No remaining quantity to fill");
+        }
+        const nextFilled = (order.filledQuantity ?? 0) + fillQty;
+        const avg =
+          order.averageFillPrice != null && order.filledQuantity > 0
+            ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
+              nextFilled
+            : body.price;
+        const createdFill = await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
+        });
+        const instructions =
+          order.allocationInstructions.length > 0
+            ? order.allocationInstructions
+            : [{ id: 0, sequence: 1, account: order.account, weightPct: 100 }];
+        const splits = instructions.map((instruction) => ({
+          instructionId: instruction.id,
+          shares: Math.floor((fillQty * instruction.weightPct) / 100),
+        }));
+        let remainingShares = fillQty - splits.reduce((sum, split) => sum + split.shares, 0);
+        const ranked = [...instructions].sort((a, b) => b.weightPct - a.weightPct || a.sequence - b.sequence);
+        for (const instruction of ranked) {
+          if (remainingShares <= 0) break;
+          const split = splits.find((candidate) => candidate.instructionId === instruction.id);
+          if (!split) continue;
+          split.shares += 1;
+          remainingShares -= 1;
+        }
+        await tx.orderFillAllocation.createMany({
+          data: splits
+            .filter((split) => split.shares > 0)
+            .map((split) => ({
+              fillId: createdFill.id,
+              instructionId: split.instructionId,
+              shares: split.shares,
+              notional: split.shares * body.price,
+            })),
+        });
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.PARTIALLY_FILLED },
+          data: {
+            status: OrderStatus.PARTIALLY_FILLED,
+            filledQuantity: nextFilled,
+            remainingQuantity: Math.max(0, order.quantity - nextFilled),
+            averageFillPrice: avg,
+          },
         });
         await tx.orderActivity.create({
           data: {
             orderId,
-            message: `Partial fill: ${body.filledQty.toLocaleString()} shares @ $${body.price.toFixed(2)}`,
+            message: `Partial fill: ${fillQty.toLocaleString()} shares @ $${body.price.toFixed(2)}`,
             actorName: "EMS",
           },
         });
@@ -305,9 +479,58 @@ export async function POST(
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       await prisma.$transaction(async (tx) => {
+        const fillQty = Math.max(0, order.quantity - (order.filledQuantity ?? 0));
+        const nextFilled = order.quantity;
+        const avg =
+          order.averageFillPrice != null && order.filledQuantity > 0
+            ? ((order.averageFillPrice * order.filledQuantity) + fillQty * body.price) /
+              nextFilled
+            : body.price;
+        const createdFill = await tx.orderFill.create({
+          data: {
+            orderId,
+            sequence: order.fills.length + 1,
+            quantity: fillQty,
+            price: body.price,
+            executedAt: new Date(),
+          },
+        });
+        const instructions =
+          order.allocationInstructions.length > 0
+            ? order.allocationInstructions
+            : [{ id: 0, sequence: 1, account: order.account, weightPct: 100 }];
+        const splits = instructions.map((instruction) => ({
+          instructionId: instruction.id,
+          shares: Math.floor((fillQty * instruction.weightPct) / 100),
+        }));
+        let remainingShares = fillQty - splits.reduce((sum, split) => sum + split.shares, 0);
+        const ranked = [...instructions].sort((a, b) => b.weightPct - a.weightPct || a.sequence - b.sequence);
+        for (const instruction of ranked) {
+          if (remainingShares <= 0) break;
+          const split = splits.find((candidate) => candidate.instructionId === instruction.id);
+          if (!split) continue;
+          split.shares += 1;
+          remainingShares -= 1;
+        }
+        await tx.orderFillAllocation.createMany({
+          data: splits
+            .filter((split) => split.shares > 0)
+            .map((split) => ({
+              fillId: createdFill.id,
+              instructionId: split.instructionId,
+              shares: split.shares,
+              notional: split.shares * body.price,
+            })),
+        });
         await tx.order.update({
           where: { id: orderId },
-          data: { status: OrderStatus.FULLY_FILLED },
+          data: {
+            status: OrderStatus.FULLY_FILLED,
+            filledQuantity: nextFilled,
+            remainingQuantity: 0,
+            averageFillPrice: avg,
+            fillCompletedAt: new Date(),
+          },
         });
         await tx.orderActivity.create({
           data: {
@@ -326,6 +549,10 @@ export async function POST(
         trader: { select: { id: true, name: true, email: true } },
         reviewer: { select: { id: true, name: true } },
         breachLogs: { orderBy: { createdAt: "desc" } },
+        fills: {
+          orderBy: { sequence: "asc" },
+          include: { allocations: true },
+        },
       },
     });
 

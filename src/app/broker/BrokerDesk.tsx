@@ -16,6 +16,15 @@ type ApiOrder = {
   strategy: string;
   status: OrderStatus;
   createdAt: string;
+  shortLocateStatus?: string | null;
+  shortLocateId?: string | null;
+  shortLocateQuantity?: number | null;
+  shortBorrowRateCapPct?: number | null;
+  shortBorrowRatePct?: number | null;
+  shortLocateProvider?: string | null;
+  shortLocateRequestedAt?: string | null;
+  shortLocateRespondedAt?: string | null;
+  shortLocateExpiresAt?: string | null;
   trader: { name: string };
   activities: { id: number; message: string; createdAt: string }[];
 };
@@ -25,12 +34,33 @@ export default function BrokerDesk() {
   const [orders, setOrders] = useState<ApiOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectId, setRejectId] = useState<number | null>(null);
+  const [ackId, setAckId] = useState<number | null>(null);
+  const [locateDraft, setLocateDraft] = useState({
+    shortLocateId: "",
+    shortLocateQuantity: "",
+    shortBorrowRatePct: "0.50",
+    shortLocateProvider: "",
+    shortLocateExpiresAt: "",
+  });
+  const [ackError, setAckError] = useState<string | null>(null);
   const [rejectCode, setRejectCode] = useState("BAD_SYMBOLOGY");
+
+  function toIsoDatetime(value: string): string | null {
+    if (!value.trim()) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  }
 
   const load = useCallback(async () => {
     const res = await fetch("/api/orders");
     if (res.ok) {
       const data = await res.json();
+      console.log("[BrokerDesk] orders response:", data);
+      console.log("[BrokerDesk] total orders:", data.orders?.length ?? 0);
+      if (data.orders?.length) {
+        console.log("[BrokerDesk] statuses:", data.orders.map((o: ApiOrder) => ({ id: o.id, ticket: o.ticketKey, status: o.status })));
+      }
       setOrders(data.orders ?? []);
     }
   }, []);
@@ -59,12 +89,68 @@ export default function BrokerDesk() {
   }, [orders]);
 
   async function ack(id: number) {
+    const order = orders.find((o) => o.id === id);
+    const isShort = order?.direction === "SHORT";
+    const quantity = order?.quantity ?? 0;
+
+    if (isShort) {
+      const shortLocateId = locateDraft.shortLocateId.trim();
+      const shortLocateProvider = locateDraft.shortLocateProvider.trim();
+      const shortBorrowRatePct = Number(locateDraft.shortBorrowRatePct);
+      const shortLocateQuantity = Number(locateDraft.shortLocateQuantity) || quantity;
+      const shortLocateExpiresAt = toIsoDatetime(locateDraft.shortLocateExpiresAt);
+
+      if (!shortLocateId || !shortLocateProvider || !Number.isFinite(shortBorrowRatePct) || shortBorrowRatePct <= 0) {
+        setAckError("Enter locate ID, locate source, and a valid borrow rate before acknowledging.");
+        return;
+      }
+
+      if (!Number.isFinite(shortLocateQuantity) || shortLocateQuantity <= 0) {
+        setAckError("Enter a valid locate quantity before acknowledging.");
+        return;
+      }
+
+      setAckError(null);
+      const res = await fetch(`/api/orders/${id}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "broker_ack",
+          shortLocateId,
+          shortLocateQuantity,
+          shortBorrowRatePct,
+          shortLocateProvider,
+          shortLocateExpiresAt,
+        }),
+      });
+
+      if (res.ok) {
+        setAckId(null);
+        setLocateDraft({
+          shortLocateId: "",
+          shortLocateQuantity: "",
+          shortBorrowRatePct: "0.50",
+          shortLocateProvider: "",
+          shortLocateExpiresAt: "",
+        });
+        await load();
+        return;
+      }
+
+      const data = await res.json().catch(() => null);
+      setAckError(data?.error ?? "Failed to acknowledge locate");
+      return;
+    }
+
     const res = await fetch(`/api/orders/${id}/transition`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "broker_ack" }),
     });
-    if (res.ok) await load();
+    if (res.ok) {
+      setAckId(null);
+      await load();
+    }
   }
 
   async function rej(id: number) {
@@ -79,6 +165,7 @@ export default function BrokerDesk() {
     });
     if (res.ok) {
       setRejectId(null);
+      setAckError(null);
       await load();
     }
   }
@@ -157,9 +244,25 @@ export default function BrokerDesk() {
                           <button
                             type="button"
                             className="rounded bg-emerald-600 px-2 py-1 text-xs text-white"
-                            onClick={() => ack(o.id)}
+                            onClick={() => {
+                              if (o.direction === "SHORT") {
+                                setAckError(null);
+                                setAckId(ackId === o.id ? null : o.id);
+                                setLocateDraft({
+                                  shortLocateId: o.shortLocateId ?? "",
+                                  shortLocateQuantity: String(o.shortLocateQuantity ?? o.quantity),
+                                  shortBorrowRatePct: String(o.shortBorrowRatePct ?? o.shortBorrowRateCapPct ?? 0.5),
+                                  shortLocateProvider: o.shortLocateProvider ?? "",
+                                  shortLocateExpiresAt: o.shortLocateExpiresAt
+                                    ? o.shortLocateExpiresAt.slice(0, 16)
+                                    : "",
+                                });
+                                return;
+                              }
+                              void ack(o.id);
+                            }}
                           >
-                            Acknowledge
+                            {o.direction === "SHORT" ? "Ack + locate" : "Acknowledge"}
                           </button>
                           <button
                             type="button"
@@ -190,6 +293,66 @@ export default function BrokerDesk() {
                               >
                                 Confirm reject
                               </button>
+                            </div>
+                          )}
+                          {ackId === o.id && o.direction === "SHORT" && (
+                            <div className="mt-2 flex flex-col gap-2 rounded border border-indigo-200 bg-indigo-50 p-2">
+                              <input
+                                value={locateDraft.shortLocateId}
+                                onChange={(e) =>
+                                  setLocateDraft((prev) => ({ ...prev, shortLocateId: e.target.value }))
+                                }
+                                placeholder="shortLocateId"
+                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                              />
+                              <input
+                                value={locateDraft.shortLocateProvider}
+                                onChange={(e) =>
+                                  setLocateDraft((prev) => ({ ...prev, shortLocateProvider: e.target.value }))
+                                }
+                                placeholder="shortLocateProvider"
+                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                              />
+                              <div className="grid grid-cols-2 gap-1">
+                                <input
+                                  type="number"
+                                  value={locateDraft.shortLocateQuantity}
+                                  onChange={(e) =>
+                                    setLocateDraft((prev) => ({ ...prev, shortLocateQuantity: e.target.value }))
+                                  }
+                                  placeholder="Qty"
+                                  className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                                />
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={locateDraft.shortBorrowRatePct}
+                                  onChange={(e) =>
+                                    setLocateDraft((prev) => ({ ...prev, shortBorrowRatePct: e.target.value }))
+                                  }
+                                  placeholder="shortBorrowRatePct"
+                                  className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                                />
+                              </div>
+                              <input
+                                type="datetime-local"
+                                value={locateDraft.shortLocateExpiresAt}
+                                onChange={(e) =>
+                                  setLocateDraft((prev) => ({ ...prev, shortLocateExpiresAt: e.target.value }))
+                                }
+                                placeholder="shortLocateExpiresAt"
+                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                              />
+                              <button
+                                type="button"
+                                className="rounded bg-emerald-600 px-2 py-1 text-xs text-white"
+                                onClick={() => void ack(o.id)}
+                              >
+                                Confirm locate + acknowledge
+                              </button>
+                              {ackError && (
+                                <p className="text-xs text-rose-700">{ackError}</p>
+                              )}
                             </div>
                           )}
                         </div>

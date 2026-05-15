@@ -7,6 +7,7 @@ export interface PreTradeImpact {
   sectorAfter: number;
   buyingPowerAfter: number;
   triggeredChecks: string[];
+  isRestricted?: boolean;
 }
 
 export type PortfolioImpactInput = {
@@ -157,13 +158,18 @@ export function computePreTradeImpact(input: {
   livePrice?: number | null;
   direction?: OrderDirection | "BUY" | "SELL" | "SHORT";
   portfolio?: PortfolioImpactInput;
+  restrictedStocks?: string[];
 }): PreTradeImpact {
   const dir = input.direction ?? "BUY";
+  const sym = input.ticker.toUpperCase();
+  const isRestricted = input.restrictedStocks?.includes(sym) ?? false;
+
+  let impact: PreTradeImpact;
   if (
     input.portfolio &&
     input.portfolio.exposure.totalValue > 0
   ) {
-    return portfolioImpact(
+    impact = portfolioImpact(
       {
         ticker: input.ticker,
         quantity: input.quantity,
@@ -173,6 +179,14 @@ export function computePreTradeImpact(input: {
       },
       input.portfolio,
     );
+  } else {
+    impact = legacyImpact(input);
   }
-  return legacyImpact(input);
+
+  if (isRestricted) {
+    impact.triggeredChecks.push("Restricted security");
+    impact.isRestricted = true;
+  }
+
+  return impact;
 }

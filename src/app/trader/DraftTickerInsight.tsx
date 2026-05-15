@@ -10,12 +10,7 @@ type Props = {
 
 type HeaderPreference = "name-first" | "ticker-first";
 
-function fmtVol(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  return String(n);
-}
+
 
 function fmtPx(n: number | null, digits = 2): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -107,9 +102,7 @@ export default function DraftTickerInsight({ ticker, onLastPrice }: Props) {
             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               Stock context
             </p>
-            <p className="text-xs text-slate-500">
-              Live fields from Finnhub. Bid/Ask require paid tier (showing when available).
-            </p>
+            <p className="text-xs text-slate-500">Live fields from Finnhub.</p>
           </div>
           <div className="relative">
             <button
@@ -218,68 +211,22 @@ export default function DraftTickerInsight({ ticker, onLastPrice }: Props) {
               </div>
 
               <div className="flex min-w-[140px] flex-1 flex-col gap-1.5">
-                <div className="rounded-lg border border-slate-200 border-l-4 border-l-rose-400 bg-slate-50 px-2.5 py-1.5">
-                  <p className="text-[10px] font-semibold uppercase text-rose-700">
-                    Ask
-                  </p>
-                  <p className="font-mono text-sm font-medium tabular-nums text-slate-900">
-                    ${fmtPx(quote.ask)}
-                  </p>
-                  {quote.askSize != null && (
-                    <p className="font-mono text-[10px] tabular-nums text-slate-500">
-                      Size {quote.askSize.toLocaleString()}
-                    </p>
-                  )}
-                </div>
                 <div className="rounded-lg border border-slate-200 border-l-4 border-l-emerald-500 bg-slate-50 px-2.5 py-1.5">
-                  <p className="text-[10px] font-semibold uppercase text-emerald-800">
-                    Bid
-                  </p>
+                  <p className="text-[10px] font-semibold uppercase text-emerald-800">High</p>
                   <p className="font-mono text-sm font-medium tabular-nums text-slate-900">
-                    ${fmtPx(quote.bid)}
+                    ${fmtPx(quote.high)}
                   </p>
-                  {quote.bidSize != null && (
-                    <p className="font-mono text-[10px] tabular-nums text-slate-500">
-                      Size {quote.bidSize.toLocaleString()}
-                    </p>
-                  )}
+                </div>
+                <div className="rounded-lg border border-slate-200 border-l-4 border-l-rose-400 bg-slate-50 px-2.5 py-1.5">
+                  <p className="text-[10px] font-semibold uppercase text-rose-700">Low</p>
+                  <p className="font-mono text-sm font-medium tabular-nums text-slate-900">
+                    ${fmtPx(quote.low)}
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
-              {(
-                [
-                  ["High", quote.high != null ? `$${fmtPx(quote.high)}` : "—"],
-                  ["Low", quote.low != null ? `$${fmtPx(quote.low)}` : "—"],
-                  [
-                    "Vol",
-                    quote.volume != null && quote.volume > 0
-                      ? fmtVol(quote.volume)
-                      : quote.volume === 0
-                        ? "0"
-                        : "—",
-                  ],
-                  [
-                    "Spread",
-                    quote.spread != null
-                      ? `$${fmtPx(quote.spread)}`
-                      : quote.bid != null && quote.ask != null
-                        ? `$${fmtPx(quote.ask - quote.bid)}`
-                        : "—",
-                  ],
-                ] as const
-              ).map(([label, val]) => (
-                <div key={label} className="rounded-lg bg-slate-50 px-2 py-1.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                    {label}
-                  </p>
-                  <p className="font-mono text-sm font-semibold tabular-nums text-slate-900">
-                    {val}
-                  </p>
-                </div>
-              ))}
-            </div>
+            
 
             {quote.asOf && (
               <p className="text-[10px] text-slate-400">
@@ -287,11 +234,7 @@ export default function DraftTickerInsight({ ticker, onLastPrice }: Props) {
               </p>
             )}
 
-            {(!quote.bid || !quote.ask) && (
-              <p className="mt-2 text-[10px] italic text-slate-500">
-                Note: Bid/Ask require a paid Finnhub subscription. Last, high, low, and volume are available on the free tier.
-              </p>
-            )}
+            {/* Removed bid/ask/vol/spread and subscription notes per UX request */}
           </div>
         )}
       </div>

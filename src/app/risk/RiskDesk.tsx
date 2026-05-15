@@ -48,6 +48,11 @@ export default function RiskDesk() {
       fetch("/api/orders").then((r) => r.json()),
       fetch("/api/risk/breach-log").then((r) => r.json()),
     ]);
+    console.log("[RiskDesk] orders response:", or);
+    console.log("[RiskDesk] total orders:", or.orders?.length ?? 0);
+    if (or.orders?.length) {
+      console.log("[RiskDesk] statuses:", or.orders.map((o: ApiOrder) => ({ id: o.id, ticket: o.ticketKey, status: o.status })));
+    }
     setOrders(or.orders ?? []);
     setBreaches(br.breaches ?? []);
   }, []);

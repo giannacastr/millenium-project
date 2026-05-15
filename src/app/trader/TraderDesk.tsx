@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
 import {
   ACCOUNT_OPTIONS,
@@ -16,8 +16,18 @@ import {
   STATUS_LABEL,
   statusPillClass,
 } from "@/lib/trading/status-ui";
+import {
+  createAllocationDraft,
+  formatAllocationSummary,
+  hasValidAllocationTotal,
+  normalizeAllocationDrafts,
+  type AllocationDraft,
+} from "@/lib/trading/allocation";
 import PreTradeImpactAnalysis from "@/components/PreTradeImpactAnalysis";
+import PreTradeAllocationEditor from "@/components/PreTradeAllocationEditor";
+import IntradayTickerChart from "@/components/IntradayTickerChart";
 import Top5Positions from "@/components/Top5Positions";
+import BuyingPowerGauge from "@/components/BuyingPowerGauge";
 import DraftTickerInsight from "./DraftTickerInsight";
 import OrderExecutionExpand from "./OrderExecutionExpand";
 
@@ -33,12 +43,102 @@ type ApiOrder = {
   account: string;
   strategy: string;
   notes: string | null;
+  shortLocateStatus?: string | null;
+  shortLocateId?: string | null;
+  shortLocateQuantity?: number | null;
+  shortBorrowRateCapPct?: number | null;
+  shortBorrowRatePct?: number | null;
+  shortLocateProvider?: string | null;
+  shortLocateRequestedAt?: string | null;
+  shortLocateRespondedAt?: string | null;
+  shortLocateExpiresAt?: string | null;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  filledQuantity: number;
+  remainingQuantity: number;
+  averageFillPrice: number | null;
+  arrivalPrice: number | null;
+  fillStartedAt: string | null;
+  fillCompletedAt: string | null;
+  allocationLockedAt: string | null;
+  allocationInstructions: { id: number; sequence: number; account: string; weightPct: number }[];
+  fills: {
+    id: number;
+    sequence: number;
+    quantity: number;
+    price: number;
+    executedAt: string;
+    allocations: { id: number; fillId: number; instructionId: number; shares: number; notional: number }[];
+  }[];
   activities: { id: number; message: string; actorName: string | null; createdAt: string }[];
   trader: { name: string };
 };
+
+type TicketState = {
+  direction: "BUY" | "SELL" | "SHORT";
+  ticker: string;
+  quantity: number;
+  orderType: "MARKET" | "LIMIT" | "VWAP";
+  limitPrice: string;
+  allocations: AllocationDraft[];
+  strategy: string;
+  notes: string;
+  shortLocateQuantity: number;
+  shortBorrowRateCapPct: string;
+  shortLocateProvider: string;
+  shortLocateNotes: string;
+};
+
+function createEmptyTicket(): TicketState {
+  return {
+    direction: "BUY",
+    ticker: "",
+    quantity: 5000,
+    orderType: "MARKET",
+    limitPrice: "",
+    allocations: [createAllocationDraft(ACCOUNT_OPTIONS[0], "100")],
+    strategy: STRATEGY_OPTIONS[0],
+    notes: "",
+    shortLocateQuantity: 5000,
+    shortBorrowRateCapPct: "0.50",
+    shortLocateProvider: "",
+    shortLocateNotes: "",
+  };
+}
+
+function createTicketFromOrder(order: ApiOrder): TicketState {
+  return {
+    direction: order.direction as TicketState["direction"],
+    ticker: order.ticker,
+    quantity: order.quantity,
+    orderType: order.orderType as TicketState["orderType"],
+    limitPrice: order.limitPrice ?? "",
+    allocations:
+      order.allocationInstructions.length > 0
+        ? order.allocationInstructions.map((allocation) =>
+            createAllocationDraft(allocation.account, String(allocation.weightPct)),
+          )
+        : [createAllocationDraft(order.account, "100")],
+    strategy: order.strategy,
+    notes: order.notes ?? "",
+    shortLocateQuantity: order.shortLocateQuantity ?? order.quantity,
+    shortBorrowRateCapPct: order.shortBorrowRateCapPct != null ? String(order.shortBorrowRateCapPct) : "0.50",
+    shortLocateProvider: order.shortLocateProvider ?? "",
+    shortLocateNotes: order.notes ?? "",
+  };
+}
+
+function isCancelableStatus(status: OrderStatus): boolean {
+  return [
+    "DRAFT",
+    "SUBMITTED",
+    "IN_REVIEW",
+    "RISK_APPROVED",
+    "ACKNOWLEDGED",
+    "PARTIALLY_FILLED",
+  ].includes(status);
+}
 
 export default function TraderDesk() {
   const { data: session } = useSession();
@@ -47,31 +147,39 @@ export default function TraderDesk() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [bucket, setBucket] = useState<BlotterFilter>("all");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [amendSourceOrder, setAmendSourceOrder] = useState<ApiOrder | null>(null);
+  const [cancelTargetOrder, setCancelTargetOrder] = useState<ApiOrder | null>(null);
   const [sort, setSort] = useState<"time" | "ticker" | "status">("time");
-  const [liveLastPrice, setLiveLastPrice] = useState<number | null>(null);
   const [tickerOptions, setTickerOptions] = useState<string[]>(
     Object.keys(TICKER_META).sort(),
   );
   const [tickerDetails, setTickerDetails] = useState<
     Record<string, { companyName: string; sector: string; price: number }>
   >({});
-  const [tickerQuery, setTickerQuery] = useState("MSFT");
+  const [tickerQuery, setTickerQuery] = useState("");
   const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false);
   const [exposureSnapshot, setExposureSnapshot] = useState<{
     exposure: ExposureDTO;
     limits: RiskLimitsDTO;
   } | null>(null);
 
-  const [ticket, setTicket] = useState({
-    direction: "BUY" as "BUY" | "SELL" | "SHORT",
-    ticker: "MSFT",
-    quantity: 5000,
-    orderType: "MARKET" as "MARKET" | "LIMIT" | "VWAP",
-    limitPrice: "" as string,
-    account: ACCOUNT_OPTIONS[0],
-    strategy: STRATEGY_OPTIONS[0],
-    notes: "",
-  });
+  const [ticket, setTicket] = useState<TicketState>(() => createEmptyTicket());
+
+  const normalizedAllocations = useMemo(
+    () => normalizeAllocationDrafts(ticket.allocations),
+    [ticket.allocations],
+  );
+  const allocationSummary = useMemo(
+    () =>
+      normalizedAllocations.length > 0
+        ? formatAllocationSummary(normalizedAllocations)
+        : ACCOUNT_OPTIONS[0],
+    [normalizedAllocations],
+  );
+  const allocationTotalOk = useMemo(
+    () => hasValidAllocationTotal(normalizedAllocations),
+    [normalizedAllocations],
+  );
 
   const load = useCallback(async () => {
     const res = await fetch("/api/orders", { cache: "no-store" });
@@ -160,6 +268,7 @@ export default function TraderDesk() {
     sector: "Other",
     price: 100,
   };
+  const currentTicketPrice = tickerDetails[ticket.ticker]?.price ?? tickerMeta.price;
   const filteredTickers = useMemo(() => {
     const query = tickerQuery.trim().toUpperCase();
     const base = [...tickerOptions].sort((a, b) => a.localeCompare(b));
@@ -174,7 +283,7 @@ export default function TraderDesk() {
     ticker: ticket.ticker,
     quantity: ticket.quantity,
     limitPrice: limitNum,
-    livePrice: liveLastPrice,
+    livePrice: currentTicketPrice,
     direction: ticket.direction,
     portfolio: exposureSnapshot ?? undefined,
   });
@@ -202,6 +311,11 @@ export default function TraderDesk() {
     return rows;
   }, [orders, bucket, sort]);
 
+  const selectedOrder = useMemo(
+    () => orders.find((order) => order.id === selectedId) ?? null,
+    [orders, selectedId],
+  );
+
   const counts = useMemo(() => {
     const c = {
       draft: 0,
@@ -211,40 +325,124 @@ export default function TraderDesk() {
       rejected: 0,
     };
     for (const o of orders) {
-      if (o.status === "DRAFT") c.draft++;
-      if (o.status === "SUBMITTED") c.submitted++;
-      if (o.status === "IN_REVIEW") c.inReview++;
-      if (o.status === "PARTIALLY_FILLED" || o.status === "FULLY_FILLED")
+      const status = o.status as string;
+      if (status === "DRAFT") c.draft++;
+      if (status === "SUBMITTED") c.submitted++;
+      if (status === "IN_REVIEW") c.inReview++;
+      if (status === "PARTIALLY_FILLED" || status === "FULLY_FILLED")
         c.filled++;
-      if (o.status === "REJECTED" || o.status === "CANCELLED") c.rejected++;
+      if (status === "REJECTED" || status === "CANCELLED" || status === "CANCELLED_PARTIAL")
+        c.rejected++;
     }
     return c;
   }, [orders]);
 
+  function openNewTicket() {
+    setTicket(createEmptyTicket());
+    setAmendSourceOrder(null);
+    setDrawerOpen(true);
+    setTickerQuery("");
+    setTickerDropdownOpen(false);
+    setSubmitError(null);
+  }
+
+  function openAmendTicket(order: ApiOrder) {
+    setTicket(createTicketFromOrder(order));
+    setAmendSourceOrder(order);
+    setDrawerOpen(true);
+    setSelectedId(order.id);
+    setTickerQuery(order.ticker);
+    setTickerDropdownOpen(false);
+  }
+
   async function submitTicket(mode: "draft" | "submit") {
+    setSubmitError(null);
+
+    const sym = ticket.ticker.trim().toUpperCase();
+    if (!sym) {
+      setSubmitError("Please input a valid stock ticker.");
+      return false;
+    }
+    if (!tickerOptions.includes(sym)) {
+      setSubmitError("Invalid ticker — please input a valid stock ticker.");
+      return false;
+    }
+
+    const payload = {
+      direction: ticket.direction,
+      ticker: ticket.ticker,
+      quantity: ticket.quantity,
+      orderType: ticket.orderType,
+      limitPrice:
+        ticket.orderType === "LIMIT" ? Number(ticket.limitPrice) || null : null,
+      account: allocationSummary,
+      allocations: normalizedAllocations,
+      strategy: ticket.strategy,
+      notes:
+        ticket.direction === "SHORT" && ticket.shortLocateNotes.trim().length > 0
+          ? `${ticket.notes ? `${ticket.notes}\n\n` : ""}${ticket.shortLocateNotes.trim()}`
+          : ticket.notes,
+      shortLocateQuantity:
+        ticket.direction === "SHORT" ? ticket.shortLocateQuantity : undefined,
+      shortBorrowRateCapPct:
+        ticket.direction === "SHORT" && ticket.shortBorrowRateCapPct.trim().length > 0
+          ? Number(ticket.shortBorrowRateCapPct)
+          : undefined,
+      shortLocateProvider:
+        ticket.direction === "SHORT" ? ticket.shortLocateProvider : undefined,
+      mode,
+    };
+
+    if (amendSourceOrder?.status === "DRAFT") {
+      const patchRes = await fetch(`/api/orders/${amendSourceOrder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!patchRes.ok) {
+        const patchErr = await patchRes.json().catch(() => null);
+        setSubmitError(patchErr?.error ?? "Failed to update draft.");
+        return false;
+      }
+
+      if (mode === "submit") {
+        const submitRes = await fetch(`/api/orders/${amendSourceOrder.id}/transition`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "submit_draft" }),
+        });
+        if (!submitRes.ok) {
+          const submitErr = await submitRes.json().catch(() => null);
+          setSubmitError(submitErr?.error ?? "Failed to submit draft.");
+          return false;
+        }
+      }
+
+      setDrawerOpen(false);
+      setTickerDropdownOpen(false);
+      setAmendSourceOrder(null);
+      await load();
+      setSelectedId(amendSourceOrder.id);
+      return true;
+    }
+
     const res = await fetch("/api/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        direction: ticket.direction,
-        ticker: ticket.ticker,
-        quantity: ticket.quantity,
-        orderType: ticket.orderType,
-        limitPrice:
-          ticket.orderType === "LIMIT" ? Number(ticket.limitPrice) || null : null,
-        account: ticket.account,
-        strategy: ticket.strategy,
-        notes: ticket.notes,
-        mode,
-      }),
+      body: JSON.stringify(payload),
     });
-    if (res.ok) {
-      const data = await res.json();
-      setDrawerOpen(false);
-      setTickerDropdownOpen(false);
-      await load();
-      setSelectedId(data.order?.id ?? null);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      setSubmitError(err?.error ?? "Failed to create order.");
+      return false;
     }
+    const data = await res.json();
+    setDrawerOpen(false);
+    setTickerDropdownOpen(false);
+    setAmendSourceOrder(null);
+    await load();
+    setSelectedId(data.order?.id ?? null);
+    return true;
   }
 
   async function runTransition(
@@ -258,8 +456,71 @@ export default function TraderDesk() {
     });
     if (res.ok) {
       await load();
+      return true;
+    }
+    return false;
+  }
+
+  async function confirmCancel() {
+    if (!cancelTargetOrder) return;
+    const ok = await runTransition(cancelTargetOrder.id, { action: "cancel" });
+    if (ok) {
+      setCancelTargetOrder(null);
     }
   }
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const [leftWidth, setLeftWidth] = useState<number | null>(null);
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 1024px)");
+    setIsLargeScreen(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsLargeScreen(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || leftWidth !== null || !isLargeScreen) return;
+    const total = containerRef.current.offsetWidth;
+    const leftMinPx = total * 0.63;
+    const leftDefaultPx = total - 405 - 8;
+    setLeftWidth(Math.max(leftMinPx, leftDefaultPx));
+  }, [leftWidth, isLargeScreen]);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const minLeft = rect.width * 0.63;
+      const maxLeft = rect.width - 405 - 8;
+      setLeftWidth(Math.max(minLeft, Math.min(maxLeft, x)));
+    };
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
 
   const stripBtn = (b: BlotterFilter, label: string, n: number) => (
     <button
@@ -292,7 +553,7 @@ export default function TraderDesk() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setDrawerOpen(true)}
+              onClick={openNewTicket}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               New order ticket
@@ -308,8 +569,8 @@ export default function TraderDesk() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-6 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-4">
+      <div ref={containerRef} className="mx-auto flex max-w-[1600px] flex-col px-4 py-6 lg:flex-row">
+        <div className="space-y-4 overflow-hidden" style={{ flexShrink: 0, width: isLargeScreen && leftWidth != null ? leftWidth : undefined }}>
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <span className="text-sm text-slate-500">
               Today&apos;s blotter — click a row for execution detail
@@ -348,19 +609,21 @@ export default function TraderDesk() {
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Qty</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Avg Px</th>
                   <th className="px-4 py-3">Time</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       Loading…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       No orders in this filter.
                     </td>
                   </tr>
@@ -398,11 +661,23 @@ export default function TraderDesk() {
                             {o.quantity.toLocaleString()}
                           </td>
                           <td className="px-4 py-3">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
-                            >
-                              {STATUS_LABEL[o.status]}
-                            </span>
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(o.status)}`}
+                              >
+                                {STATUS_LABEL[o.status]}
+                              </span>
+                              {o.filledQuantity > 0 && (
+                                <span className="text-xs text-slate-500">
+                                  {o.filledQuantity.toLocaleString()} / {o.quantity.toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-700">
+                            {o.averageFillPrice != null
+                              ? `$${o.averageFillPrice.toFixed(2)}`
+                              : "—"}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-500">
                             {new Date(o.createdAt).toLocaleTimeString([], {
@@ -410,14 +685,58 @@ export default function TraderDesk() {
                               minute: "2-digit",
                             })}
                           </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (isCancelableStatus(o.status)) {
+                                    setCancelTargetOrder(o);
+                                  }
+                                }}
+                                disabled={!isCancelableStatus(o.status)}
+                                title={
+                                  isCancelableStatus(o.status)
+                                    ? "Cancel order"
+                                    : "Order cannot be cancelled in its current state"
+                                }
+                                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm transition ${
+                                  isCancelableStatus(o.status)
+                                    ? "border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                                    : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                }`}
+                                aria-label={`Cancel ${o.ticketKey}`}
+                              >
+                                ×
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openAmendTicket(o);
+                                }}
+                                title="Amend order"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                                aria-label={`Amend ${o.ticketKey}`}
+                              >
+                                ✎
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                         {expanded && (
                           <tr className="border-b border-slate-200 bg-slate-50/50">
-                            <td colSpan={8} className="p-0 align-top">
+                            <td colSpan={9} className="p-0 align-top">
                               <OrderExecutionExpand
                                 order={o}
-                                onRunTransition={(body) =>
+                                onRunTransition={(body: Record<string, unknown>) =>
                                   runTransition(o.id, body)
+                                }
+                                currentPrice={
+                                  o.ticker === ticket.ticker
+                                    ? currentTicketPrice
+                                    : undefined
                                 }
                               />
                             </td>
@@ -432,7 +751,49 @@ export default function TraderDesk() {
           </div>
         </div>
 
-        <aside className="space-y-4">
+        <div
+          className="hidden lg:block cursor-col-resize shrink-0"
+          style={{ width: 8 }}
+          onMouseDown={handleDividerMouseDown}
+        />
+
+        <aside className="space-y-4 overflow-hidden" style={{ flex: "1 1 0%", minWidth: 0 }}>
+          {selectedOrder && (
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {(() => {
+                const companyName =
+                  tickerDetails[selectedOrder.ticker]?.companyName ??
+                  TICKER_META[selectedOrder.ticker]?.companyName ??
+                  selectedOrder.ticker;
+                return (
+                  <>
+              <h3 className="mb-3 text-sm font-semibold text-slate-900">
+                {selectedOrder.ticketKey} · {companyName}
+              </h3>
+              <p className="mb-3 text-xs italic text-slate-500">
+                Selected order chart. Click a different row to switch.
+              </p>
+              <IntradayTickerChart
+                ticker={selectedOrder.ticker}
+                submittedAt={selectedOrder.createdAt}
+                fills={selectedOrder.fills.map((fill) => ({
+                  price: fill.price,
+                  executedAt: fill.executedAt,
+                  quantity: fill.quantity,
+                }))}
+                currentPrice={
+                  selectedOrder.averageFillPrice ??
+                  tickerDetails[selectedOrder.ticker]?.price ??
+                  TICKER_META[selectedOrder.ticker]?.price ??
+                  150
+                }
+              />
+                  </>
+                );
+              })()}
+            </section>
+          )}
+
           <Top5Positions exposure={exposureSnapshot?.exposure ?? null} />
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -445,6 +806,14 @@ export default function TraderDesk() {
             </p>
             {exposureSnapshot ? (
               <>
+                <div className="mb-4 flex justify-center">
+                  <BuyingPowerGauge
+                    usedPct={exposureSnapshot.exposure.buyingPowerUsed}
+                    capPct={exposureSnapshot.limits.buyingPowerUsedCapPct}
+                    title="Buying Power Utilization"
+                    showLabel={true}
+                  />
+                </div>
                 <dl className="mb-3 grid grid-cols-2 gap-2 text-xs">
                   <dt className="text-slate-500">NAV (holdings)</dt>
                   <dd className="text-right font-mono font-medium text-slate-900">
@@ -531,10 +900,24 @@ export default function TraderDesk() {
         <div className="fixed inset-0 z-40 flex justify-end bg-black/40">
           <div className="h-full w-full max-w-lg overflow-y-auto bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-              <h2 className="text-lg font-semibold">New equity ticket</h2>
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {amendSourceOrder ? "Amend equity ticket" : "New equity ticket"}
+                </h2>
+                {amendSourceOrder && amendSourceOrder.status !== "DRAFT" && (
+                  <p className="text-xs text-amber-700">
+                    Amending {amendSourceOrder.ticketKey} — changes will require re-submission.
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={() => setDrawerOpen(false)}
+                onClick={() => {
+                  setDrawerOpen(false);
+                  setAmendSourceOrder(null);
+                  setTickerDropdownOpen(false);
+                  setSubmitError(null);
+                }}
                 className="text-slate-500 hover:text-slate-800"
               >
                 ✕
@@ -547,7 +930,16 @@ export default function TraderDesk() {
                     key={d}
                     type="button"
                     onClick={() =>
-                      setTicket((t) => ({ ...t, direction: d }))
+                      setTicket((t) => ({
+                        ...t,
+                        direction: d,
+                        allocations:
+                          d === "SHORT" && t.allocations.length === 1 && t.allocations[0].account === "Long Book"
+                            ? [createAllocationDraft("Short Book", t.allocations[0].weightPct)]
+                            : d !== "SHORT" && t.allocations.length === 1 && t.allocations[0].account === "Short Book"
+                              ? [createAllocationDraft("Long Book", t.allocations[0].weightPct)]
+                              : t.allocations,
+                      }))
                     }
                     className={`flex-1 rounded-lg py-2 text-sm font-medium ${
                       ticket.direction === d
@@ -568,6 +960,7 @@ export default function TraderDesk() {
                       const next = e.target.value.toUpperCase();
                       setTickerQuery(next);
                       setTickerDropdownOpen(true);
+                      setSubmitError(null);
                       if (filteredTickers.length === 1 && filteredTickers[0] === next) {
                         setTicket((t) => ({ ...t, ticker: next }));
                       }
@@ -620,21 +1013,23 @@ export default function TraderDesk() {
                   Start typing to filter available tickers in alphabetical order.
                 </p>
               </label>
-              <DraftTickerInsight
-                ticker={ticket.ticker}
-                onLastPrice={setLiveLastPrice}
-              />
+              <DraftTickerInsight ticker={ticket.ticker} />
               <label className="block text-sm">
                 <span className="text-slate-600">Quantity</span>
                 <input
                   type="number"
                   value={ticket.quantity}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const nextQty = Number(e.target.value);
                     setTicket((t) => ({
                       ...t,
-                      quantity: Number(e.target.value),
-                    }))
-                  }
+                      quantity: nextQty,
+                      shortLocateQuantity:
+                        t.direction === "SHORT" && t.shortLocateQuantity === t.quantity
+                          ? nextQty
+                          : t.shortLocateQuantity,
+                    }));
+                  }}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                 />
               </label>
@@ -668,22 +1063,69 @@ export default function TraderDesk() {
                   />
                 </label>
               )}
-              <label className="block text-sm">
-                <span className="text-slate-600">Account</span>
-                <select
-                  value={ticket.account}
-                  onChange={(e) =>
-                    setTicket((t) => ({ ...t, account: e.target.value }))
-                  }
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                >
-                  {ACCOUNT_OPTIONS.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {ticket.direction === "SHORT" && (
+                <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-indigo-900">Short locate request</h3>
+                    <p className="mt-1 text-xs text-indigo-800/80">
+                      Request the borrow before the broker can acknowledge and release the short to market.
+                    </p>
+                  </div>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Locate shares requested</span>
+                    <input
+                      type="number"
+                      value={ticket.shortLocateQuantity}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateQuantity: Number(e.target.value) }))
+                      }
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Max borrow rate (% annual)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={ticket.shortBorrowRateCapPct}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortBorrowRateCapPct: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Preferred locate source</span>
+                    <input
+                      type="text"
+                      value={ticket.shortLocateProvider}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateProvider: e.target.value }))
+                      }
+                      placeholder="Prime broker, internal inventory, etc."
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="text-slate-600">Short rationale / cover plan</span>
+                    <textarea
+                      value={ticket.shortLocateNotes}
+                      onChange={(e) =>
+                        setTicket((t) => ({ ...t, shortLocateNotes: e.target.value }))
+                      }
+                      rows={3}
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                </section>
+              )}
+              <PreTradeAllocationEditor
+                value={ticket.allocations}
+                onChange={(allocations) =>
+                  setTicket((t) => ({ ...t, allocations }))
+                }
+                availableAccounts={ACCOUNT_OPTIONS}
+              />
               <label className="block text-sm">
                 <span className="text-slate-600">Strategy</span>
                 <select
@@ -746,6 +1188,12 @@ export default function TraderDesk() {
                 )}
               </div>
 
+              {submitError && (
+                <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+                  {submitError}
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
@@ -759,9 +1207,57 @@ export default function TraderDesk() {
                   onClick={() => submitTicket("submit")}
                   className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white"
                 >
-                  Submit for review
+                  {amendSourceOrder?.status === "DRAFT" ? "Submit draft" : "Submit for review"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelTargetOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                  Confirm cancel request
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                  Cancel {cancelTargetOrder.ticketKey}?
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm leading-6 text-slate-600">
+              This order is at the broker. Cancelling will send a cancel request. Any filled shares cannot be recalled.
+            </p>
+            {cancelTargetOrder.filledQuantity > 0 && (
+              <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Filled so far: {cancelTargetOrder.filledQuantity.toLocaleString()} shares.
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+              >
+                Keep order
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCancel()}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+              >
+                Send cancel request
+              </button>
             </div>
           </div>
         </div>

@@ -2,13 +2,24 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { formatOrderTitle } from "@/lib/trading/order-format";
 import {
+  allocationWeightTotal,
+  formatAllocationSummary,
+  normalizeAllocationDrafts,
+} from "@/lib/trading/allocation";
+import {
   OrderDirection,
   OrderStatus,
   OrderTypeEnum,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+
+const allocationDraftSchema = z.object({
+  account: z.string().min(1),
+  weightPct: z.number().positive(),
+});
 
 const patchDraftSchema = z.object({
   direction: z.enum(["BUY", "SELL", "SHORT"]).optional(),
@@ -17,8 +28,12 @@ const patchDraftSchema = z.object({
   orderType: z.enum(["MARKET", "LIMIT", "VWAP"]).optional(),
   limitPrice: z.number().nullable().optional(),
   account: z.string().min(1).optional(),
+  allocations: z.array(allocationDraftSchema).optional(),
   strategy: z.string().min(1).optional(),
   notes: z.string().optional(),
+  shortLocateQuantity: z.number().int().positive().optional(),
+  shortBorrowRateCapPct: z.number().positive().optional(),
+  shortLocateProvider: z.string().optional(),
 });
 
 export async function PATCH(
@@ -63,26 +78,78 @@ export async function PATCH(
         : null;
 
   const title = formatOrderTitle(direction, ticker, quantity);
+  const allocations =
+    body.allocations && body.allocations.length > 0
+      ? normalizeAllocationDrafts(
+          body.allocations.map((allocation) => ({
+            id: `alloc-${Math.random().toString(36).slice(2, 10)}`,
+            account: allocation.account,
+            weightPct: String(allocation.weightPct),
+          })),
+        )
+      : normalizeAllocationDrafts(
+          [{ id: "legacy", account: body.account ?? existing.account, weightPct: "100" }],
+        );
+  if (Math.abs(allocationWeightTotal(allocations) - 100) > 0.01) {
+    return NextResponse.json({ error: "Allocation splits must total 100%" }, { status: 400 });
+  }
+  const accountSummary = formatAllocationSummary(allocations);
 
-  const updated = await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      direction,
-      ticker,
-      quantity,
-      orderType,
-      limitPrice:
-        orderType === "LIMIT" && limitPrice != null ? limitPrice : null,
-      account: body.account ?? existing.account,
-      strategy: body.strategy ?? existing.strategy,
-      notes: body.notes ?? existing.notes,
-      title,
-    },
-    include: {
-      activities: { orderBy: { createdAt: "asc" } },
-      trader: { select: { id: true, name: true, email: true } },
-      breachLogs: true,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.orderAllocationInstruction.deleteMany({ where: { orderId } });
+    await tx.orderAllocationInstruction.createMany({
+      data: allocations.map((allocation, index) => ({
+        orderId,
+        sequence: index + 1,
+        account: allocation.account,
+        weightPct: allocation.weightPct,
+      })),
+    });
+
+    return tx.order.update({
+      where: { id: orderId },
+      data: {
+        direction,
+        ticker,
+        quantity,
+        orderType,
+        limitPrice:
+          orderType === "LIMIT" && limitPrice != null ? limitPrice : null,
+        account: accountSummary,
+        strategy: body.strategy ?? existing.strategy,
+        notes: body.notes ?? existing.notes,
+        shortLocateStatus:
+          direction === OrderDirection.SHORT
+            ? existing.shortLocateStatus ?? ShortLocateStatus.NOT_REQUIRED
+            : ShortLocateStatus.NOT_REQUIRED,
+        shortLocateQuantity:
+          direction === OrderDirection.SHORT
+            ? body.shortLocateQuantity ?? existing.shortLocateQuantity ?? quantity
+            : null,
+        shortBorrowRateCapPct:
+          direction === OrderDirection.SHORT
+            ? body.shortBorrowRateCapPct ?? existing.shortBorrowRateCapPct ?? null
+            : null,
+        shortLocateProvider:
+          direction === OrderDirection.SHORT
+            ? body.shortLocateProvider ?? existing.shortLocateProvider ?? null
+            : null,
+        title,
+        filledQuantity: 0,
+        remainingQuantity: quantity,
+        averageFillPrice: null,
+        fillStartedAt: null,
+        fillCompletedAt: null,
+        allocationLockedAt: null,
+      },
+      include: {
+        activities: { orderBy: { createdAt: "asc" } },
+        trader: { select: { id: true, name: true, email: true } },
+        breachLogs: true,
+        allocationInstructions: { orderBy: { sequence: "asc" } },
+        fills: { orderBy: { sequence: "asc" } },
+      },
+    });
   });
 
   return NextResponse.json({

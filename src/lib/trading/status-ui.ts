@@ -4,10 +4,11 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   DRAFT: "Draft",
   SUBMITTED: "Submitted",
   IN_REVIEW: "In Review",
-  RISK_APPROVED: "Approved (broker)",
+  RISK_APPROVED: "Approved / broker pending",
   ACKNOWLEDGED: "Acknowledged",
   PARTIALLY_FILLED: "Partially Filled",
   FULLY_FILLED: "Fully Filled",
+  CANCELLED_PARTIAL: "Cancelled (partial)",
   REJECTED: "Rejected",
   CANCELLED: "Cancelled",
 };
@@ -27,6 +28,8 @@ export function statusPillClass(status: OrderStatus): string {
       return "bg-blue-100 text-blue-900";
     case "FULLY_FILLED":
       return "bg-emerald-100 text-emerald-900";
+    case "CANCELLED_PARTIAL":
+      return "bg-orange-100 text-orange-900";
     case "REJECTED":
     case "CANCELLED":
       return "bg-red-100 text-red-900";
@@ -55,6 +58,6 @@ export function filterForBucket(
   if (bucket === "filled")
     return status === "PARTIALLY_FILLED" || status === "FULLY_FILLED";
   if (bucket === "rejected")
-    return status === "REJECTED" || status === "CANCELLED";
+    return status === "REJECTED" || status === "CANCELLED" || status === "CANCELLED_PARTIAL";
   return true;
 }

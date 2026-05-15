@@ -2,11 +2,20 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { computePreTradeImpact } from "@/lib/trading/risk";
 import { computeExposureSnapshot } from "@/lib/trading/portfolio";
+import { processSimulatedFillEngine } from "@/lib/trading/fill-engine";
 import { formatOrderTitle } from "@/lib/trading/order-format";
+import {
+  allocationWeightTotal,
+  formatAllocationSummary,
+  normalizeAllocationDrafts,
+  type AllocationDraft,
+  type AllocationInstructionInput,
+} from "@/lib/trading/allocation";
 import {
   OrderDirection,
   OrderStatus,
   OrderTypeEnum,
+  ShortLocateStatus,
   UserType,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -17,6 +26,11 @@ const orderInclude = {
   trader: { select: { id: true, name: true, email: true } },
   reviewer: { select: { id: true, name: true } },
   breachLogs: { orderBy: { createdAt: "desc" as const } },
+  allocationInstructions: { orderBy: { sequence: "asc" as const } },
+  fills: {
+    orderBy: { sequence: "asc" as const },
+    include: { allocations: true },
+  },
 };
 
 function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
@@ -24,35 +38,6 @@ function serializeOrder(o: Record<string, unknown> & { limitPrice?: unknown }) {
     ...o,
     limitPrice: o.limitPrice != null ? String(o.limitPrice) : null,
   };
-}
-
-/** Auto-fill any ACKNOWLEDGED orders that have been waiting >= 30 seconds. */
-async function autoFillMatureAcknowledgedOrders() {
-  const cutoff = new Date(Date.now() - 30_000);
-  const due = await prisma.order.findMany({
-    where: {
-      status: OrderStatus.ACKNOWLEDGED,
-      updatedAt: { lte: cutoff },
-    },
-    select: { id: true },
-  });
-  if (!due.length) return;
-
-  await prisma.$transaction(async (tx) => {
-    for (const row of due) {
-      await tx.order.update({
-        where: { id: row.id },
-        data: { status: OrderStatus.FULLY_FILLED },
-      });
-      await tx.orderActivity.create({
-        data: {
-          orderId: row.id,
-          message: `Fully filled automatically 30s after broker acknowledgement`,
-          actorName: "EMS",
-        },
-      });
-    }
-  });
 }
 
 export async function GET() {
@@ -65,8 +50,11 @@ export async function GET() {
   const uid = Number(session.user.id);
 
   try {
-    // Opportunistically run the auto-fill engine on every poll.
-    await autoFillMatureAcknowledgedOrders();
+    // Opportunistically run the fill engine on every poll without blocking the
+    // current list response.
+    void processSimulatedFillEngine().catch((e) => {
+      console.error("[api/orders] fill engine failed", e);
+    });
 
     if (type === UserType.EQUITY_TRADER) {
       const rows = await prisma.order.findMany({
@@ -74,6 +62,7 @@ export async function GET() {
         include: orderInclude,
         orderBy: { createdAt: "desc" },
       });
+      console.log(`[api/orders] EQUITY_TRADER ${uid}: returning ${rows.length} orders`);
       return NextResponse.json({ orders: rows.map(serializeOrder) });
     }
 
@@ -82,6 +71,8 @@ export async function GET() {
         include: orderInclude,
         orderBy: { createdAt: "desc" },
       });
+      console.log(`[api/orders] ${type} ${uid}: returning ${rows.length} total orders`);
+      console.log(`[api/orders] order statuses:`, rows.map(o => ({ id: o.id, ticketKey: o.ticketKey, status: o.status })));
       return NextResponse.json({ orders: rows.map(serializeOrder) });
     }
 
@@ -92,6 +83,11 @@ export async function GET() {
   }
 }
 
+const allocationDraftSchema = z.object({
+  account: z.string().min(1),
+  weightPct: z.number().positive(),
+});
+
 const createSchema = z.object({
   direction: z.enum(["BUY", "SELL", "SHORT"]),
   ticker: z.string().min(1).max(16),
@@ -99,8 +95,12 @@ const createSchema = z.object({
   orderType: z.enum(["MARKET", "LIMIT", "VWAP"]),
   limitPrice: z.number().nullable().optional(),
   account: z.string().min(1),
+  allocations: z.array(allocationDraftSchema).optional(),
   strategy: z.string().min(1),
   notes: z.string().optional(),
+  shortLocateQuantity: z.number().int().positive().optional(),
+  shortBorrowRateCapPct: z.number().positive().optional(),
+  shortLocateProvider: z.string().optional(),
   mode: z.enum(["draft", "submit"]),
 });
 
@@ -129,18 +129,51 @@ export async function POST(req: NextRequest) {
   const status =
     body.mode === "draft" ? OrderStatus.DRAFT : OrderStatus.SUBMITTED;
 
-  const snapshot = await computeExposureSnapshot({
-    extraSymbols: [body.ticker.toUpperCase()],
-  });
+  const [snapshot, restrictedStocks] = await Promise.all([
+    computeExposureSnapshot({
+      extraSymbols: [body.ticker.toUpperCase()],
+    }),
+    prisma.restrictedStock.findMany({
+      select: { ticker: true },
+    }),
+  ]);
+
+  const restrictedTickerList = restrictedStocks.map((rs) => rs.ticker);
+  const isRestricted = restrictedTickerList.includes(body.ticker.toUpperCase());
+  
+  if (isRestricted) {
+    return NextResponse.json(
+      { error: `${body.ticker.toUpperCase()} is on the restricted list and cannot be traded.` },
+      { status: 400 }
+    );
+  }
+
   const impact = computePreTradeImpact({
     ticker: body.ticker.toUpperCase(),
     quantity: body.quantity,
     limitPrice: body.limitPrice ?? undefined,
     direction,
     portfolio: snapshot,
+    restrictedStocks: restrictedTickerList,
   });
 
   try {
+    const normalizedAllocations = normalizeAllocationDrafts(
+      (body.allocations ?? []).map((row) => ({
+        id: `alloc-${Math.random().toString(36).slice(2, 10)}`,
+        account: row.account,
+        weightPct: String(row.weightPct),
+      })),
+    );
+    const orderAllocations =
+      normalizedAllocations.length > 0
+        ? normalizedAllocations
+        : [{ account: body.account, weightPct: 100 }];
+    const accountSummary = formatAllocationSummary(orderAllocations);
+    if (Math.abs(allocationWeightTotal(orderAllocations) - 100) > 0.01) {
+      return NextResponse.json({ error: "Allocation splits must total 100%" }, { status: 400 });
+    }
+
     const maxRow = await prisma.order.findFirst({
       orderBy: { id: "desc" },
       select: { id: true },
@@ -166,11 +199,35 @@ export async function POST(req: NextRequest) {
             body.orderType === "LIMIT" && body.limitPrice != null
               ? String(body.limitPrice)
               : null,
-          account: body.account,
+          account: accountSummary,
           strategy: body.strategy,
           notes: body.notes ?? "",
           status,
+          shortLocateStatus:
+            direction === OrderDirection.SHORT && status === OrderStatus.SUBMITTED
+              ? ShortLocateStatus.REQUESTED
+              : ShortLocateStatus.NOT_REQUIRED,
+          shortLocateQuantity:
+            direction === OrderDirection.SHORT ? body.shortLocateQuantity ?? body.quantity : null,
+          shortBorrowRateCapPct:
+            direction === OrderDirection.SHORT ? body.shortBorrowRateCapPct ?? null : null,
+          shortLocateProvider:
+            direction === OrderDirection.SHORT ? body.shortLocateProvider ?? null : null,
+          shortLocateRequestedAt:
+            direction === OrderDirection.SHORT && status === OrderStatus.SUBMITTED
+              ? new Date()
+              : null,
           traderId,
+          filledQuantity: 0,
+          remainingQuantity: body.quantity,
+          allocationLockedAt: null,
+          allocationInstructions: {
+            create: orderAllocations.map((allocation, index) => ({
+              sequence: index + 1,
+              account: allocation.account,
+              weightPct: allocation.weightPct,
+            })),
+          },
         },
       });
 
@@ -180,7 +237,9 @@ export async function POST(req: NextRequest) {
           message:
             status === OrderStatus.DRAFT
               ? `Draft saved by ${traderName}`
-              : `Submitted by ${traderName} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+              : direction === OrderDirection.SHORT
+                ? `Short entry requested by ${traderName} · locate requested from prime broker`
+                : `Submitted by ${traderName} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
           actorName: traderName,
         },
       });
