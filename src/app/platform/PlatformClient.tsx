@@ -74,10 +74,7 @@ function SignInForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="mx-auto max-w-md">
-      <div className="rounded-2xl border border-blue-400/50 bg-white p-8 shadow-sm">
-        <h2 className="mb-6 text-center text-2xl font-semibold text-slate-900">
-          Sign in
-        </h2>
+      <div className="rounded-2xl bg-white">
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="rounded-lg border border-red-400 bg-red-50 p-3 text-sm text-red-700">
