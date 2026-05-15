@@ -210,24 +210,32 @@ export default function OrderExecutionExpand({
   );
 
   const shortLocatePanel = o.direction === "SHORT" ? (
-    <section className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
-      <h4 className="text-sm font-semibold text-indigo-900">Short locate</h4>
+    <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+      <h4 className="text-sm font-semibold text-slate-900">Short locate</h4>
       <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
         <div className="text-slate-500">Locate status</div>
-        <div>{o.shortLocateStatus ?? "NOT_REQUIRED"}</div>
-        <div className="text-slate-500">Requested shares</div>
+        <div>
+          {o.shortLocateStatus === "CONFIRMED" ? (
+            <span className="font-medium text-emerald-700">Confirmed</span>
+          ) : o.shortLocateStatus === "REQUESTED" ? (
+            <span className="font-medium text-amber-700">Requested — awaiting broker</span>
+          ) : (
+            <span className="text-slate-500">{o.shortLocateStatus ?? "NOT_REQUIRED"}</span>
+          )}
+        </div>
+        <div className="text-slate-500">Shares requested (locate)</div>
         <div>{o.shortLocateQuantity?.toLocaleString() ?? o.quantity.toLocaleString()}</div>
-        <div className="text-slate-500">Borrow cap</div>
-        <div>{o.shortBorrowRateCapPct != null ? `${o.shortBorrowRateCapPct.toFixed(2)}%` : "—"}</div>
-        <div className="text-slate-500">Confirmed borrow</div>
-        <div>{o.shortBorrowRatePct != null ? `${o.shortBorrowRatePct.toFixed(2)}%` : "—"}</div>
-        <div className="text-slate-500">Locate ID</div>
-        <div className="break-all">{o.shortLocateId ?? "—"}</div>
-        <div className="text-slate-500">Provider</div>
+        <div className="text-slate-500">Max borrow rate (cap)</div>
+        <div>{o.shortBorrowRateCapPct != null ? `${o.shortBorrowRateCapPct.toFixed(2)}% annual` : "—"}</div>
+        <div className="text-slate-500">Confirmed borrow rate</div>
+        <div>{o.shortBorrowRatePct != null ? `${o.shortBorrowRatePct.toFixed(2)}% annual` : "—"}</div>
+        <div className="text-slate-500">Locate confirmation ID</div>
+        <div className="break-all font-mono text-xs">{o.shortLocateId ?? "—"}</div>
+        <div className="text-slate-500">Lender / source</div>
         <div>{o.shortLocateProvider ?? "—"}</div>
       </div>
       {(o.shortLocateRequestedAt || o.shortLocateRespondedAt || o.shortLocateExpiresAt) && (
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
           <div>Requested: {o.shortLocateRequestedAt ? fmtTime(o.shortLocateRequestedAt) : "—"}</div>
           <div>Responded: {o.shortLocateRespondedAt ? fmtTime(o.shortLocateRespondedAt) : "—"}</div>
           <div>Expires: {o.shortLocateExpiresAt ? fmtTime(o.shortLocateExpiresAt) : "—"}</div>

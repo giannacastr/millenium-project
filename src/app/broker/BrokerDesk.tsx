@@ -299,53 +299,72 @@ export default function BrokerDesk() {
                             </div>
                           )}
                           {ackId === o.id && o.direction === "SHORT" && (
-                            <div className="mt-2 flex flex-col gap-2 rounded border border-indigo-200 bg-indigo-50 p-2">
-                              <input
-                                value={locateDraft.shortLocateId}
-                                onChange={(e) =>
-                                  setLocateDraft((prev) => ({ ...prev, shortLocateId: e.target.value }))
-                                }
-                                placeholder="shortLocateId"
-                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
-                              />
-                              <input
-                                value={locateDraft.shortLocateProvider}
-                                onChange={(e) =>
-                                  setLocateDraft((prev) => ({ ...prev, shortLocateProvider: e.target.value }))
-                                }
-                                placeholder="shortLocateProvider"
-                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
-                              />
-                              <div className="grid grid-cols-2 gap-1">
+                            <div className="mt-2 flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 p-2">
+                              <p className="text-xs font-semibold text-amber-900">Short locate confirmation</p>
+                              <p className="text-xs text-slate-600">
+                                The trader requests {o.shortLocateQuantity?.toLocaleString() ?? o.quantity.toLocaleString()} shares
+                                at max {o.shortBorrowRateCapPct != null ? `${o.shortBorrowRateCapPct.toFixed(2)}%` : "—"} borrow rate
+                                from {o.shortLocateProvider || "unspecified source"}.
+                                Enter the confirmed locate details below.
+                              </p>
+                              <label className="text-xs">
+                                <span className="font-medium text-slate-700">Locate confirmation ID</span>
                                 <input
-                                  type="number"
-                                  value={locateDraft.shortLocateQuantity}
+                                  value={locateDraft.shortLocateId}
                                   onChange={(e) =>
-                                    setLocateDraft((prev) => ({ ...prev, shortLocateQuantity: e.target.value }))
+                                    setLocateDraft((prev) => ({ ...prev, shortLocateId: e.target.value }))
                                   }
-                                  placeholder="Qty"
-                                  className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                                  placeholder="e.g. LOC-12345"
+                                  className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
                                 />
+                              </label>
+                              <label className="text-xs">
+                                <span className="font-medium text-slate-700">Lender / source</span>
                                 <input
-                                  type="number"
-                                  step="0.01"
-                                  value={locateDraft.shortBorrowRatePct}
+                                  value={locateDraft.shortLocateProvider}
                                   onChange={(e) =>
-                                    setLocateDraft((prev) => ({ ...prev, shortBorrowRatePct: e.target.value }))
+                                    setLocateDraft((prev) => ({ ...prev, shortLocateProvider: e.target.value }))
                                   }
-                                  placeholder="shortBorrowRatePct"
-                                  className="rounded border border-indigo-200 px-2 py-1 text-xs"
+                                  placeholder="e.g. Goldman Sachs, internal inventory"
+                                  className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
                                 />
+                              </label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-xs">
+                                  <span className="font-medium text-slate-700">Confirmed shares</span>
+                                  <input
+                                    type="number"
+                                    value={locateDraft.shortLocateQuantity}
+                                    onChange={(e) =>
+                                      setLocateDraft((prev) => ({ ...prev, shortLocateQuantity: e.target.value }))
+                                    }
+                                    className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+                                  />
+                                </label>
+                                <label className="text-xs">
+                                  <span className="font-medium text-slate-700">Borrow rate (% annual)</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={locateDraft.shortBorrowRatePct}
+                                    onChange={(e) =>
+                                      setLocateDraft((prev) => ({ ...prev, shortBorrowRatePct: e.target.value }))
+                                    }
+                                    className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+                                  />
+                                </label>
                               </div>
-                              <input
-                                type="datetime-local"
-                                value={locateDraft.shortLocateExpiresAt}
-                                onChange={(e) =>
-                                  setLocateDraft((prev) => ({ ...prev, shortLocateExpiresAt: e.target.value }))
-                                }
-                                placeholder="shortLocateExpiresAt"
-                                className="rounded border border-indigo-200 px-2 py-1 text-xs"
-                              />
+                              <label className="text-xs">
+                                <span className="font-medium text-slate-700">Locate expires at</span>
+                                <input
+                                  type="datetime-local"
+                                  value={locateDraft.shortLocateExpiresAt}
+                                  onChange={(e) =>
+                                    setLocateDraft((prev) => ({ ...prev, shortLocateExpiresAt: e.target.value }))
+                                  }
+                                  className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+                                />
+                              </label>
                               <button
                                 type="button"
                                 className="rounded bg-emerald-600 px-2 py-1 text-xs text-white"

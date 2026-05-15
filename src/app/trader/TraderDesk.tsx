@@ -1065,15 +1065,23 @@ export default function TraderDesk() {
                 </label>
               )}
               {ticket.direction === "SHORT" && (
-                <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                  <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2">
+                    <p className="text-xs font-medium text-amber-900">
+                      Short selling sells borrowed shares, hoping to buy them back cheaper. If the price
+                      rises instead, losses are unlimited. A locate (borrow confirmation) from the prime
+                      broker is required before the short can be executed.
+                    </p>
+                  </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-indigo-900">Short locate request</h3>
-                    <p className="mt-1 text-xs text-indigo-800/80">
-                      Request the borrow before the broker can acknowledge and release the short to market.
+                    <h3 className="text-sm font-semibold text-slate-900">Short locate request</h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      These details tell the prime broker which shares to borrow and at what cost.
                     </p>
                   </div>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Locate shares requested</span>
+                    <span className="text-slate-600">Shares to borrow (locate quantity)</span>
+                    <p className="text-xs text-slate-500">How many shares you need to borrow from the broker. Usually matches the order quantity.</p>
                     <input
                       type="number"
                       value={ticket.shortLocateQuantity}
@@ -1084,7 +1092,8 @@ export default function TraderDesk() {
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Max borrow rate (% annual)</span>
+                    <span className="text-slate-600">Max acceptable borrow rate (% annual)</span>
+                    <p className="text-xs text-slate-500">The highest annual interest rate you are willing to pay on the borrowed shares. Hard-to-borrow stocks can have rates above 50%.</p>
                     <input
                       type="number"
                       step="0.01"
@@ -1097,18 +1106,20 @@ export default function TraderDesk() {
                   </label>
                   <label className="block text-sm">
                     <span className="text-slate-600">Preferred locate source</span>
+                    <p className="text-xs text-slate-500">Where to source the borrow — the broker's internal inventory, a third-party lender, or another prime broker.</p>
                     <input
                       type="text"
                       value={ticket.shortLocateProvider}
                       onChange={(e) =>
                         setTicket((t) => ({ ...t, shortLocateProvider: e.target.value }))
                       }
-                      placeholder="Prime broker, internal inventory, etc."
+                      placeholder="e.g. Prime broker, internal desk, external lender"
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                     />
                   </label>
                   <label className="block text-sm">
                     <span className="text-slate-600">Short rationale / cover plan</span>
+                    <p className="text-xs text-slate-500">Explain why you expect the stock to fall and how/when you plan to cover (buy back) the position.</p>
                     <textarea
                       value={ticket.shortLocateNotes}
                       onChange={(e) =>

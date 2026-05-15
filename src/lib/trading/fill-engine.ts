@@ -244,7 +244,6 @@ export async function processSimulatedFillEngine() {
       where: {
         status: {
           in: [
-            OrderStatus.RISK_APPROVED,
             OrderStatus.ACKNOWLEDGED,
             OrderStatus.PARTIALLY_FILLED,
           ],

@@ -22,6 +22,11 @@ type ApiOrder = {
   breachLogs: { checkType: string }[];
   trader: { name: string; email: string };
   activities: { message: string; createdAt: string }[];
+  shortLocateStatus?: string | null;
+  shortLocateQuantity?: number | null;
+  shortBorrowRateCapPct?: number | null;
+  shortLocateProvider?: string | null;
+  shortLocateRequestedAt?: string | null;
 };
 
 type BreachRow = {
@@ -213,6 +218,27 @@ export default function RiskDesk() {
                     {selected.account} · {selected.strategy}
                   </dd>
                 </dl>
+                {selected.direction === "SHORT" && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+                    <p className="mb-2 text-xs font-semibold uppercase text-amber-900">Short sale details</p>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <dt className="text-slate-500">Locate status</dt>
+                      <dd className="font-medium">{selected.shortLocateStatus ?? "NOT_REQUIRED"}</dd>
+                      <dt className="text-slate-500">Locate shares requested</dt>
+                      <dd className="font-medium">{selected.shortLocateQuantity?.toLocaleString() ?? "—"}</dd>
+                      <dt className="text-slate-500">Max borrow rate cap</dt>
+                      <dd className="font-medium">{selected.shortBorrowRateCapPct != null ? `${selected.shortBorrowRateCapPct.toFixed(2)}%` : "—"}</dd>
+                      <dt className="text-slate-500">Requested source</dt>
+                      <dd className="font-medium">{selected.shortLocateProvider || "—"}</dd>
+                      <dt className="text-slate-500">Locate requested at</dt>
+                      <dd className="font-medium">{selected.shortLocateRequestedAt ? new Date(selected.shortLocateRequestedAt).toLocaleString() : "—"}</dd>
+                    </dl>
+                    <p className="mt-2 text-xs text-amber-800">
+                      Short selling has unlimited downside risk. Verify the borrow rate is acceptable
+                      and that the position fits within concentration limits.
+                    </p>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
                   {selected.status === "SUBMITTED" && (
                     <button
