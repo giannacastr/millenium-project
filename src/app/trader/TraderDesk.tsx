@@ -343,6 +343,7 @@ export default function TraderDesk() {
     setDrawerOpen(true);
     setTickerQuery("");
     setTickerDropdownOpen(false);
+    setSubmitError(null);
   }
 
   function openAmendTicket(order: ApiOrder) {
@@ -355,6 +356,18 @@ export default function TraderDesk() {
   }
 
   async function submitTicket(mode: "draft" | "submit") {
+    setSubmitError(null);
+
+    const sym = ticket.ticker.trim().toUpperCase();
+    if (!sym) {
+      setSubmitError("Please input a valid stock ticker.");
+      return false;
+    }
+    if (!tickerOptions.includes(sym)) {
+      setSubmitError("Invalid ticker — please input a valid stock ticker.");
+      return false;
+    }
+
     const payload = {
       direction: ticket.direction,
       ticker: ticket.ticker,
@@ -386,7 +399,11 @@ export default function TraderDesk() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!patchRes.ok) return false;
+      if (!patchRes.ok) {
+        const patchErr = await patchRes.json().catch(() => null);
+        setSubmitError(patchErr?.error ?? "Failed to update draft.");
+        return false;
+      }
 
       if (mode === "submit") {
         const submitRes = await fetch(`/api/orders/${amendSourceOrder.id}/transition`, {
@@ -394,7 +411,11 @@ export default function TraderDesk() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "submit_draft" }),
         });
-        if (!submitRes.ok) return false;
+        if (!submitRes.ok) {
+          const submitErr = await submitRes.json().catch(() => null);
+          setSubmitError(submitErr?.error ?? "Failed to submit draft.");
+          return false;
+        }
       }
 
       setDrawerOpen(false);
@@ -410,15 +431,18 @@ export default function TraderDesk() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (res.ok) {
-      const data = await res.json();
-      setDrawerOpen(false);
-      setTickerDropdownOpen(false);
-      setAmendSourceOrder(null);
-      await load();
-      setSelectedId(data.order?.id ?? null);
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      setSubmitError(err?.error ?? "Failed to create order.");
+      return false;
     }
-    return res.ok;
+    const data = await res.json();
+    setDrawerOpen(false);
+    setTickerDropdownOpen(false);
+    setAmendSourceOrder(null);
+    await load();
+    setSelectedId(data.order?.id ?? null);
+    return true;
   }
 
   async function runTransition(
@@ -449,6 +473,7 @@ export default function TraderDesk() {
   const isDragging = useRef(false);
   const [leftWidth, setLeftWidth] = useState<number | null>(null);
   const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 1024px)");
@@ -891,6 +916,7 @@ export default function TraderDesk() {
                   setDrawerOpen(false);
                   setAmendSourceOrder(null);
                   setTickerDropdownOpen(false);
+                  setSubmitError(null);
                 }}
                 className="text-slate-500 hover:text-slate-800"
               >
@@ -934,6 +960,7 @@ export default function TraderDesk() {
                       const next = e.target.value.toUpperCase();
                       setTickerQuery(next);
                       setTickerDropdownOpen(true);
+                      setSubmitError(null);
                       if (filteredTickers.length === 1 && filteredTickers[0] === next) {
                         setTicket((t) => ({ ...t, ticker: next }));
                       }
@@ -1160,6 +1187,12 @@ export default function TraderDesk() {
                   </div>
                 )}
               </div>
+
+              {submitError && (
+                <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+                  {submitError}
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <button

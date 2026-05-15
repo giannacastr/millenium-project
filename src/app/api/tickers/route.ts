@@ -1,6 +1,5 @@
 import { auth } from "@/auth";
 import { TICKER_META } from "@/lib/trading/exposure";
-import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 function getFinnhubKey(): string | null {
@@ -14,15 +13,9 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Get restricted tickers to exclude
-  const restricted = await prisma.restrictedStock.findMany({ select: { ticker: true } });
-  const restrictedSet = new Set(restricted.map((r) => r.ticker.toUpperCase()));
-
   const key = getFinnhubKey();
   if (!key) {
-    // Fallback to embedded meta list when API key missing
     const symbols = Object.entries(TICKER_META)
-      .filter(([sym]) => !restrictedSet.has(sym.toUpperCase()))
       .map(([symbol, meta]) => ({
         symbol,
         companyName: meta.companyName,
@@ -38,13 +31,12 @@ export async function GET() {
   }
 
   try {
-    // Finnhub US exchange list (may be large). Use server-side fetch and filter restricted.
     const res = await fetch(`https://finnhub.io/api/v1/stock/symbol?exchange=US&token=${encodeURIComponent(key)}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Finnhub HTTP ${res.status}`);
     const data: Array<{ symbol: string; description?: string; type?: string }> = await res.json();
 
     const symbols = data
-      .filter((row) => row.symbol && !restrictedSet.has(row.symbol.toUpperCase()))
+      .filter((row) => row.symbol)
       .map((row) => ({
         symbol: row.symbol,
         companyName: row.description ?? row.symbol,
@@ -56,9 +48,7 @@ export async function GET() {
     return NextResponse.json({ symbols }, { headers: { "Cache-Control": "private, max-age=300, stale-while-revalidate=600" } });
   } catch (e) {
     console.error("/api/tickers failed to fetch Finnhub list", e);
-    // Best-effort fallback to TICKER_META minus restricted
     const symbols = Object.entries(TICKER_META)
-      .filter(([sym]) => !restrictedSet.has(sym.toUpperCase()))
       .map(([symbol, meta]) => ({
         symbol,
         companyName: meta.companyName,
