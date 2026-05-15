@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrderStatus } from "@prisma/client";
 import {
   ACCOUNT_OPTIONS,
@@ -445,6 +445,58 @@ export default function TraderDesk() {
     }
   }
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const [leftWidth, setLeftWidth] = useState<number | null>(null);
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 1024px)");
+    setIsLargeScreen(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setIsLargeScreen(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || leftWidth !== null || !isLargeScreen) return;
+    const total = containerRef.current.offsetWidth;
+    const leftMinPx = total * 0.63;
+    const leftDefaultPx = total - 405 - 8;
+    setLeftWidth(Math.max(leftMinPx, leftDefaultPx));
+  }, [leftWidth, isLargeScreen]);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const minLeft = rect.width * 0.63;
+      const maxLeft = rect.width - 405 - 8;
+      setLeftWidth(Math.max(minLeft, Math.min(maxLeft, x)));
+    };
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
   const stripBtn = (b: BlotterFilter, label: string, n: number) => (
     <button
       key={b}
@@ -492,8 +544,8 @@ export default function TraderDesk() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-6 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-4">
+      <div ref={containerRef} className="mx-auto flex max-w-[1600px] flex-col px-4 py-6 lg:flex-row">
+        <div className="space-y-4 overflow-hidden" style={{ flexShrink: 0, width: isLargeScreen && leftWidth != null ? leftWidth : undefined }}>
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <span className="text-sm text-slate-500">
               Today&apos;s blotter — click a row for execution detail
@@ -674,7 +726,13 @@ export default function TraderDesk() {
           </div>
         </div>
 
-        <aside className="space-y-4">
+        <div
+          className="hidden lg:block cursor-col-resize shrink-0"
+          style={{ width: 8 }}
+          onMouseDown={handleDividerMouseDown}
+        />
+
+        <aside className="space-y-4 overflow-hidden" style={{ flex: "1 1 0%", minWidth: 0 }}>
           {selectedOrder && (
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               {(() => {
