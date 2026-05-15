@@ -540,7 +540,7 @@ export default function TraderDesk() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b-[5px] border-[#1434CB] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 py-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-500">

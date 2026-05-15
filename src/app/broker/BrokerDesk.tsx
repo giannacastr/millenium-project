@@ -179,7 +179,7 @@ export default function BrokerDesk() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white px-4 py-4">
+      <header className="border-b-[5px] border-[#1434CB] bg-white px-4 py-4">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between">
           <div>
             <p className="text-xs uppercase text-slate-500">
