@@ -40,12 +40,20 @@ export default function AdminOrdersView() {
   }, []);
 
   const groups = useMemo(() => {
-    const map = new Map<string, ApiOrder[]>();
+    const map = new Map<string, { orders: ApiOrder[]; totalValue: number }>();
     for (const o of orders) {
       const accounts = parsePrimaryAccounts(o);
       for (const a of accounts) {
-        if (!map.has(a)) map.set(a, []);
-        map.get(a)!.push(o);
+        if (!map.has(a)) map.set(a, { orders: [], totalValue: 0 });
+        const entry = map.get(a)!;
+        entry.orders.push(o);
+
+        const alloc = o.allocationInstructions?.find((ai: any) => ai.account === a);
+        const weight = alloc ? alloc.weightPct / 100 : 1;
+        const unitPrice = o.averageFillPrice ?? Number(o.limitPrice) ?? 0;
+        const filledQty = o.filledQuantity ?? 0;
+        const orderValue = filledQty > 0 ? filledQty * unitPrice : o.quantity * unitPrice;
+        entry.totalValue += orderValue * weight;
       }
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
@@ -64,12 +72,15 @@ export default function AdminOrdersView() {
         <div className="mt-6 text-sm text-slate-500">No orders found.</div>
       ) : (
         <div className="mt-4 space-y-6">
-          {groups.map(([account, rows]) => (
+          {groups.map(([account, { orders: rows, totalValue }]) => (
             <section key={account} className="rounded-lg border border-slate-100 bg-white">
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-slate-900">{account}</div>
                   <div className="text-xs text-slate-500">{rows.length} orders</div>
+                </div>
+                <div className="text-sm font-mono font-medium text-slate-900">
+                  ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
               <div className="overflow-x-auto p-3">

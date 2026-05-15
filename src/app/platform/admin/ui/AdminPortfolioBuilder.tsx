@@ -163,29 +163,33 @@ export default function AdminPortfolioBuilder() {
                 </p>
               </div>
               <div className="overflow-x-auto p-4">
-                <table className="w-full min-w-[520px] text-left text-sm">
+                <table className="w-full min-w-[620px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2">Ticker</th>
                       <th className="px-3 py-2 text-right">Shares</th>
+                      <th className="px-3 py-2 text-right">Value ($)</th>
                       <th className="px-3 py-2" />
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
+                        <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
                           Loading…
                         </td>
                       </tr>
                     ) : holdings.length === 0 ? (
                       <tr>
-                        <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
+                        <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
                           No holdings yet.
                         </td>
                       </tr>
                     ) : (
-                      holdings.map((h, idx) => (
+                      holdings.map((h, idx) => {
+                        const price = TICKER_META[h.ticker]?.price ?? 0;
+                        const value = h.shares * price;
+                        return (
                         <tr key={`${h.ticker}-${idx}`} className="border-t border-slate-100">
                           <td className="px-3 py-2">
                             <input
@@ -210,6 +214,9 @@ export default function AdminPortfolioBuilder() {
                               className="w-40 rounded border border-slate-300 px-2 py-1 text-right font-mono text-xs"
                             />
                           </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs text-slate-700">
+                            {price > 0 ? `$${value.toLocaleString()}` : "—"}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
@@ -220,7 +227,8 @@ export default function AdminPortfolioBuilder() {
                             </button>
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -232,6 +240,14 @@ export default function AdminPortfolioBuilder() {
                   >
                     Add row
                   </button>
+                  {holdings.length > 0 && (
+                    <span className="self-center text-right text-sm text-slate-700">
+                      Total:{" "}
+                      <strong className="font-mono">
+                        ${holdings.reduce((sum, h) => sum + h.shares * (TICKER_META[h.ticker]?.price ?? 0), 0).toLocaleString()}
+                      </strong>
+                    </span>
+                  )}
                 </div>
               </div>
             </section>
