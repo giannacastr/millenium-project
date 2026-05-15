@@ -189,13 +189,16 @@ export default function BrokerDesk() {
               Incoming queue — {session?.user?.name}
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={() => signOut({ redirectTo: "/signIn" })}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => signOut({ redirectTo: "/signIn" })}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              Sign out
+            </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
+          </div>
         </div>
       </header>
 

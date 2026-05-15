@@ -565,6 +565,7 @@ export default function TraderDesk() {
             >
               Sign out
             </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
           </div>
         </div>
       </header>

@@ -49,13 +49,16 @@ export default function PlatformClient() {
             Shared live data — role-specific desks. Signed in as{" "}
             <strong>{session?.user?.name}</strong> ({session?.user?.email})
           </p>
-          <button
-            type="button"
-            onClick={() => signOut({ redirectTo: "/signIn" })}
-            className="mt-6 rounded-lg border border-slate-500 px-4 py-2 text-sm text-slate-200 hover:bg-white/10"
-          >
-            Sign out
-          </button>
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => signOut({ redirectTo: "/signIn" })}
+              className="rounded-lg border border-slate-500 px-4 py-2 text-sm text-slate-200 hover:bg-white/10"
+            >
+              Sign out
+            </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
+          </div>
         </header>
 
         <div className="grid gap-6 md:grid-cols-3">

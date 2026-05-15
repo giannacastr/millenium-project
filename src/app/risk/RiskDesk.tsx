@@ -98,13 +98,16 @@ export default function RiskDesk() {
               Risk officer — {session?.user?.name}
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={() => signOut({ redirectTo: "/signIn" })}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => signOut({ redirectTo: "/signIn" })}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              Sign out
+            </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
+          </div>
         </div>
         <div className="mx-auto flex max-w-[1400px] gap-2 border-t border-slate-100 px-4 py-2">
           {(
