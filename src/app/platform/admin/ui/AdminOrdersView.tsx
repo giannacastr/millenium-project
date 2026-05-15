@@ -112,7 +112,7 @@ export default function AdminOrdersView() {
       {selected && (
         <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
           <div className="absolute inset-0 bg-black/40" onClick={() => setSelected(null)} />
-          <div className="relative w-full max-w-4xl overflow-y-auto rounded-lg bg-white p-6 shadow-lg">
+          <div className="relative w-full max-w-4xl max-h-[calc(100vh-6rem)] overflow-y-auto rounded-lg bg-white p-6 shadow-lg">
             <div className="flex items-start justify-between">
               <h4 className="text-lg font-semibold">Order {selected.ticketKey}</h4>
               <button className="text-sm text-slate-500" onClick={() => setSelected(null)}>Close</button>
