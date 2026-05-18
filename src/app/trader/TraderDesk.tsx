@@ -189,14 +189,18 @@ export default function TraderDesk() {
   }, []);
 
   const loadExposure = useCallback(async () => {
-    const res = await fetch("/api/exposure", { cache: "no-store" });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.exposure && data.limits) {
-      setExposureSnapshot({
-        exposure: data.exposure as ExposureDTO,
-        limits: data.limits as RiskLimitsDTO,
-      });
+    try {
+      const res = await fetch("/api/exposure", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.exposure && data.limits) {
+        setExposureSnapshot({
+          exposure: data.exposure as ExposureDTO,
+          limits: data.limits as RiskLimitsDTO,
+        });
+      }
+    } catch {
+      // non-critical; exposure loads on next poll
     }
   }, []);
 
@@ -474,6 +478,8 @@ export default function TraderDesk() {
   const [leftWidth, setLeftWidth] = useState<number | null>(null);
   const [isLargeScreen, setIsLargeScreen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 1024px)");
@@ -540,7 +546,7 @@ export default function TraderDesk() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b-[4.5px] border-[#1434CB] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 py-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-500">
@@ -560,11 +566,12 @@ export default function TraderDesk() {
             </button>
             <button
               type="button"
-              onClick={() => signOut({ redirectTo: "/signIn" })}
+              onClick={() => signOut({ redirectTo: "/platform" })}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
             >
               Sign out
             </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
           </div>
         </div>
       </header>
@@ -836,7 +843,7 @@ export default function TraderDesk() {
                     {fmtNav(exposureSnapshot.exposure.openOrderNotional)}
                   </dd>
                 </dl>
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="mb-2 text-sm font-semibold text-slate-500">
                   Single-name weight (cap {exposureSnapshot.limits.singleNameCapPct}%)
                 </p>
                 <div className="max-h-44 space-y-2 overflow-y-auto text-sm">
@@ -860,7 +867,7 @@ export default function TraderDesk() {
                       </div>
                     ))}
                 </div>
-                <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="mb-2 mt-4 text-sm font-semibold text-slate-500">
                   Sector sleeves (cap {exposureSnapshot.limits.sectorCapPct}%)
                 </p>
                 <div className="max-h-36 space-y-1 overflow-y-auto text-xs">
@@ -1064,15 +1071,23 @@ export default function TraderDesk() {
                 </label>
               )}
               {ticket.direction === "SHORT" && (
-                <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                  <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2">
+                    <p className="text-xs font-medium text-amber-900">
+                      Short selling sells borrowed shares, hoping to buy them back cheaper. If the price
+                      rises instead, losses are unlimited. A locate (borrow confirmation) from the prime
+                      broker is required before the short can be executed.
+                    </p>
+                  </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-indigo-900">Short locate request</h3>
-                    <p className="mt-1 text-xs text-indigo-800/80">
-                      Request the borrow before the broker can acknowledge and release the short to market.
+                    <h3 className="text-sm font-semibold text-slate-900">Short locate request</h3>
+                    <p className="mt-1 text-xs text-slate-600">
+                      These details tell the prime broker which shares to borrow and at what cost.
                     </p>
                   </div>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Locate shares requested</span>
+                    <span className="text-slate-600">Shares to borrow (locate quantity)</span>
+                    <p className="text-xs text-slate-500">How many shares you need to borrow from the broker. Usually matches the order quantity.</p>
                     <input
                       type="number"
                       value={ticket.shortLocateQuantity}
@@ -1083,7 +1098,8 @@ export default function TraderDesk() {
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Max borrow rate (% annual)</span>
+                    <span className="text-slate-600">Max acceptable borrow rate (% annual)</span>
+                    <p className="text-xs text-slate-500">The highest annual interest rate you are willing to pay on the borrowed shares. Hard-to-borrow stocks can have rates above 50%.</p>
                     <input
                       type="number"
                       step="0.01"
@@ -1096,18 +1112,50 @@ export default function TraderDesk() {
                   </label>
                   <label className="block text-sm">
                     <span className="text-slate-600">Preferred locate source</span>
+                    <p className="text-xs text-slate-500">Where to source the borrow — the broker's internal inventory, a third-party lender, or another prime broker.</p>
                     <input
                       type="text"
                       value={ticket.shortLocateProvider}
                       onChange={(e) =>
                         setTicket((t) => ({ ...t, shortLocateProvider: e.target.value }))
                       }
-                      placeholder="Prime broker, internal inventory, etc."
+                      placeholder="e.g. Prime broker, internal desk, external lender"
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                     />
                   </label>
-                  <label className="block text-sm">
-                    <span className="text-slate-600">Short rationale / cover plan</span>
+                  <div className="block text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600">Short rationale / cover plan</span>
+                      <button
+                        type="button"
+                        disabled={aiLoading || !ticket.ticker}
+                        onClick={async () => {
+                          setAiLoading(true);
+                          setAiError(null);
+                          try {
+                            const res = await fetch("/api/ai/generate-rationale", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ ticker: ticket.ticker }),
+                            });
+                            const data = await res.json();
+                            if (res.ok) {
+                              setTicket((t) => ({ ...t, shortLocateNotes: data.rationale }));
+                            } else {
+                              setAiError(data.error ?? "Failed to generate");
+                            }
+                          } catch {
+                            setAiError("Network error");
+                          } finally {
+                            setAiLoading(false);
+                          }
+                        }}
+                        className="rounded bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-200 disabled:opacity-40"
+                      >
+                        {aiLoading ? "Generating..." : "Generate with AI"}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Explain why you expect the stock to fall and how/when you plan to cover (buy back) the position.</p>
                     <textarea
                       value={ticket.shortLocateNotes}
                       onChange={(e) =>
@@ -1116,7 +1164,8 @@ export default function TraderDesk() {
                       rows={3}
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
                     />
-                  </label>
+                    {aiError && <p className="mt-1 text-xs text-red-600">{aiError}</p>}
+                  </div>
                 </section>
               )}
               <PreTradeAllocationEditor

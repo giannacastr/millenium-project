@@ -7,7 +7,7 @@ export default {
     strategy: "jwt",
   },
   pages: {
-    signIn: "/signIn",
+    signIn: "/platform",
   },
   callbacks: {
     jwt({ token, user }) {

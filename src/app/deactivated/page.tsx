@@ -12,7 +12,7 @@ export default function DeactivatedPage() {
         </p>
         
         <button
-          onClick={() => signOut({ redirect: true, callbackUrl: "/signIn" })}
+          onClick={() => signOut({ redirect: true, callbackUrl: "/platform" })}
           className="w-full bg-blue-600 text-white font-light py-2 rounded hover:bg-blue-700"
         >
           Sign Out

@@ -50,7 +50,7 @@ function RegisterPageInner() {
         }
       } catch (e) {
         setError((e as Error).message);
-        setTimeout(() => router.replace("/signIn"), 2000);
+        setTimeout(() => router.replace("/platform"), 2000);
       } finally {
         setLoadingInvite(false);
       }
@@ -268,7 +268,7 @@ function RegisterPageInner() {
           </form>
           <p className="mt-6 text-center text-sm text-gray-500">
             Already have an account?{" "}
-            <Link href="/signIn" className="text-blue-600 hover:underline">
+            <Link href="/platform" className="text-blue-600 hover:underline">
               Sign in
             </Link>
           </p>
@@ -394,12 +394,12 @@ function RegisterPageInner() {
         </p>
         <p className="mt-6 text-center text-sm text-gray-500">
           Already have an account?{" "}
-          <Link href="/signIn" className="text-blue-600 hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </div>
-    </main>
+           <Link href="/platform" className="text-blue-600 hover:underline">
+              Sign in
+            </Link>
+          </p>
+        </div>
+      </main>
   );
 }
 

@@ -105,7 +105,7 @@ export default function AdminPortfolioBuilder() {
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="border-b-[4.5px] border-[#1434CB] bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-4 px-4 py-4">
           <div>
             <p className="text-xs uppercase text-slate-500">Millennium · Admin</p>
@@ -116,11 +116,12 @@ export default function AdminPortfolioBuilder() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => signOut({ redirectTo: "/signIn" })}
+              onClick={() => signOut({ redirectTo: "/platform" })}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
               Sign out
             </button>
+            <img src="/images/logo-mlp.png" alt="Millennium" className="ml-3 h-5 w-auto mt-2" />
           </div>
         </div>
       </header>
