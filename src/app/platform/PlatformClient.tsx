@@ -181,9 +181,14 @@ export default function PlatformClient() {
       </header>
 
       <div className="mx-auto max-w-4xl px-6 pb-16 mt-10">
-        <div className="grid gap-6 md:grid-cols-3">
-          {ROLES.map((r) => {
-            const allowed = selfType === r.type;
+        <div className={`grid gap-6 ${isSuper ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+          {[...ROLES, ...(isSuper ? [{
+            type: "ADMIN" as UserType,
+            label: "Administrator",
+            path: "/platform/admin",
+            desc: "Portfolio builder, user management, system configuration.",
+          }] : [])].map((r) => {
+            const allowed = selfType === r.type || (r.type === ("ADMIN" as UserType) && isSuper);
             return (
               <div
                 key={r.type}
@@ -217,17 +222,6 @@ export default function PlatformClient() {
             );
           })}
         </div>
-
-        {isSuper && (
-          <div className="mt-10 text-center">
-            <Link
-              href="/platform/admin"
-              className="inline-flex justify-center rounded-xl bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              Admin: Portfolio builder
-            </Link>
-          </div>
-        )}
       </div>
     </main>
   );
